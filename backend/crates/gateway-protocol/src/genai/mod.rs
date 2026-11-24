@@ -11,3 +11,8 @@ pub use response::{
 
 /// Google 原生请求与响应使用同一 wire 标识
 pub const GENAI_PROTOCOL: &str = "genai";
+
+mod messages;
+mod stream;
+pub use messages::messages_to_genai_request;
+pub use stream::GenAiToMessagesStream;

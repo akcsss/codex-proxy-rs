@@ -6,9 +6,12 @@ export interface ProfileSelection {
   versionMode: 'latest' | 'fixed'
   clientVersion: string | null
   arch: string | null
+  systemPrompt?: string | null
 }
 
 export interface ProfileOptions {
+  defaultSystemPrompt: string
+  systemPromptSource: string
   defaults: ProfileSelection
   presets: {
     configuration: ProfileSelection

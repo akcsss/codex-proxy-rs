@@ -4,6 +4,7 @@ mod candidates;
 mod execution;
 mod feedback;
 mod selection;
+mod translation;
 pub(crate) mod workers;
 
 use crate::{

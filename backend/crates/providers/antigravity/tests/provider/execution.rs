@@ -423,3 +423,103 @@ async fn rate_limit_feedback_uses_model_scope_and_the_full_upstream_retry_delay(
         .await;
     assert!(matches!(blocked, Err(e) if e.kind() == ProviderErrorKind::NoEligibleAccount));
 }
+
+#[tokio::test]
+async fn translated_generation_delivers_terminal_wire_after_tail_usage() {
+    use gateway_core::{
+        engine::provider::ProviderRequest,
+        event::GatewayEvent,
+        operation::{GenerateRequest, Operation, ProtocolPayload},
+    };
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1internal:streamGenerateContent"))
+        .and(header("user-agent", "antigravity/cli/1.5.14 (aidev_client; os_type=linux; arch=amd64; auth_method=consumer)"))
+        .and(body_partial_json(json!({"request":{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}})))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(concat!(
+            "data: {\"response\":{\"responseId\":\"r\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n",
+            "data: {\"response\":{\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":2}}}\n\n"
+        ),"text/event-stream")).expect(2).mount(&upstream).await;
+    for (protocol, body) in [
+        (
+            "openai",
+            json!({"model":"fixture-model","input":"hello","max_output_tokens":100,"reasoning":{"effort":"none"},"text":{"format":{"type":"json_schema","schema":{"type":"object"}}}}),
+        ),
+        (
+            "anthropic",
+            json!({"model":"fixture-model","messages":[{"role":"user","content":"hello"}],"max_tokens":100}),
+        ),
+    ] {
+        let fixture = Fixture::new(&upstream.uri());
+        let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
+            ProtocolPayload::json_object(protocol, body.as_object().unwrap().clone()).unwrap(),
+        ));
+        let request = ProviderRequest::new(operation, request(false).candidate().clone());
+        let mut profile = crate::profile::ClientProfile::from_frozen(&frozen_profile()).unwrap();
+        profile.system_prompt = "Frozen AGY prompt".into();
+        let mut stream = fixture
+            .provider
+            .clone()
+            .execute(request, context(profile.frozen(), CancellationToken::new()))
+            .await
+            .unwrap();
+        let mut output = Vec::new();
+        while let Some(event) = stream.next().await {
+            let event = event.unwrap();
+            let terminal = event
+                .canonical_facts()
+                .iter()
+                .any(|f| matches!(f, GatewayEvent::Completed(_)));
+            output.extend(stream.translate_native_response(event, terminal).unwrap());
+        }
+        let last = output.last().unwrap();
+        assert!(
+            last.canonical_facts()
+                .iter()
+                .any(|f| matches!(f, GatewayEvent::Completed(_)))
+        );
+        let sent = upstream.received_requests().await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&sent.last().unwrap().body).unwrap();
+        assert_eq!(body["request"]["generationConfig"]["maxOutputTokens"], 100);
+        assert_eq!(
+            body["request"]["systemInstruction"]["parts"][0]["text"],
+            "Frozen AGY prompt"
+        );
+        assert!(
+            output
+                .iter()
+                .filter_map(|event| event.response_observation())
+                .any(|observation| observation.timings().first_token_ms.is_some())
+        );
+        if protocol == "openai" {
+            assert_eq!(
+                body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+                0
+            );
+            assert_eq!(
+                body["request"]["generationConfig"]["responseSchema"],
+                json!({"type":"object"})
+            );
+        } else {
+            assert_eq!(
+                output[0].wire_event().unwrap().data()["message"]["model"],
+                "fixture-model"
+            );
+        }
+        let wire = last.wire_event().unwrap();
+        assert_eq!(wire.protocol(), protocol);
+        if protocol == "openai" {
+            assert_eq!(wire.data()["type"], "response.completed");
+            assert_eq!(wire.data()["response"]["usage"]["input_tokens"], 7);
+        } else {
+            assert_eq!(wire.data()["type"], "message_stop");
+            assert!(
+                output
+                    .iter()
+                    .filter_map(|e| e.wire_event())
+                    .any(|w| w.data()["usage"]["input_tokens"] == 7)
+            );
+        }
+        drop(stream);
+        released(&fixture).await;
+    }
+}

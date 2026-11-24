@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 
 pub(crate) fn options() -> OpaqueProviderData {
     let presets=[Platform::Macos,Platform::Linux,Platform::Windows].into_iter().flat_map(|platform|[ClientKind::Desktop,ClientKind::Cli].map(move|client|json!({"configuration":Selection {client,platform,..Selection::default()},"automaticAvailable":true,"reason":null}))).collect::<Vec<_>>();
-    object(json!({"defaults":Selection::default(),"presets":presets}))
+    object(
+        json!({"defaults":Selection::default(),"presets":presets,"defaultSystemPrompt":super::selection::DEFAULT_SYSTEM_PROMPT,"systemPromptSource":"Antigravity CLI 1.5.15"}),
+    )
 }
 pub(crate) fn dashboard(selection: &Selection, releases: &ReleaseService) -> DashboardWireProfile {
     let snapshot = releases.snapshot(selection.target());

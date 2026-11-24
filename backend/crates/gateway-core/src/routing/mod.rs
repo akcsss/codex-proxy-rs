@@ -152,6 +152,7 @@ pub struct ModelCapabilities {
     max_output_tokens: Option<u64>,
     upstream_validates_features: bool,
     generation_protocol: Option<&'static str>,
+    translated_generation_protocols: BTreeSet<&'static str>,
 }
 
 /// Provider 为客户端模型目录提供的展示与交互能力
@@ -425,6 +426,7 @@ impl ModelCapabilities {
             max_output_tokens,
             upstream_validates_features: false,
             generation_protocol: None,
+            translated_generation_protocols: BTreeSet::new(),
         }
     }
 
@@ -441,10 +443,20 @@ impl ModelCapabilities {
         self
     }
 
-    /// 原生生成模型只接受声明的协议，其他操作沿用各自的能力约束
+    /// 声明原生生成协议；额外转换入口须显式登记，其他操作沿用各自的能力约束
     #[must_use]
     pub const fn with_generation_protocol(mut self, protocol: &'static str) -> Self {
         self.generation_protocol = Some(protocol);
+        self
+    }
+
+    /// 声明 Provider 已实现的跨协议生成入口，不改变原生入口的资格
+    #[must_use]
+    pub fn with_translated_generation_protocols(
+        mut self,
+        protocols: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
+        self.translated_generation_protocols = protocols.into_iter().collect();
         self
     }
 
@@ -454,9 +466,12 @@ impl ModelCapabilities {
         requirements: &CapabilityRequirements,
     ) -> Option<BTreeSet<Feature>> {
         if matches!(operation, crate::operation::Operation::Generate(_))
-            && self
-                .generation_protocol
-                .is_some_and(|protocol| protocol != operation.protocol())
+            && self.generation_protocol.is_some_and(|protocol| {
+                protocol != operation.protocol()
+                    && !self
+                        .translated_generation_protocols
+                        .contains(operation.protocol())
+            })
         {
             return None;
         }

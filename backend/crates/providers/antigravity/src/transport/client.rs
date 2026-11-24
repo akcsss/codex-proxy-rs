@@ -33,6 +33,7 @@ pub(crate) struct Model {
 pub(crate) struct CloudCodeClient {
     client: Client,
     origin: Url,
+    system_instruction: Box<RawValue>,
 }
 
 impl CloudCodeClient {
@@ -43,6 +44,10 @@ impl CloudCodeClient {
     ) -> Result<Self, ProviderError> {
         let client = gateway_egress::http_client(proxy)
             .map_err(|e| unsent(Kind::ProviderInfrastructureUnavailable).with_source(e))?
+            // 官方 AGY 使用 HTTP/1.1；显式选择 TLS 后端，避免工作区 feature 合并切到系统 TLS
+            .use_rustls_tls()
+            .http1_only()
+            .http1_title_case_headers()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .user_agent(profile.user_agent())
@@ -53,13 +58,20 @@ impl CloudCodeClient {
         Ok(Self {
             client,
             origin: origin.clone(),
+            system_instruction: RawValue::from_string(
+                json!({"parts":[{"text":profile.system_prompt}]}).to_string(),
+            )
+            .map_err(|e| unsent(Kind::ProviderInfrastructureUnavailable).with_source(e))?,
         })
     }
 
     pub(super) fn post(&self, action: &str, token: &str) -> reqwest::RequestBuilder {
         let mut url = self.origin.clone();
         url.set_path(&format!("/v1internal:{action}"));
-        self.client.post(url).bearer_auth(token)
+        self.client
+            .post(url)
+            .bearer_auth(token)
+            .header(reqwest::header::ACCEPT_ENCODING, "gzip")
     }
 
     pub(crate) async fn catalog(&self, token: &str) -> Result<Catalog, ProviderError> {
@@ -108,10 +120,13 @@ impl CloudCodeClient {
         struct Envelope<'a> {
             project: &'a str,
             model: &'a str,
-            request: &'a RawValue,
+            request: BTreeMap<String, &'a RawValue>,
         }
-        let request = serde_json::from_slice(body)
+        let mut request: BTreeMap<String, &RawValue> = serde_json::from_slice(body)
             .map_err(|e| unsent(Kind::InvalidRequest).with_source(e))?;
+        // 身份策略在 AGY 出站边界统一执行，其他原生字段保留原始 JSON 表达
+        request.remove("system_instruction");
+        request.insert("systemInstruction".to_owned(), &self.system_instruction);
         let (send, media) = if stream {
             (
                 self.post("streamGenerateContent", token)
@@ -133,7 +148,6 @@ impl CloudCodeClient {
             send = send.header(name, value);
         }
         let response = send
-            .header(reqwest::header::ACCEPT, media)
             .json(&Envelope {
                 project,
                 model,
@@ -142,7 +156,7 @@ impl CloudCodeClient {
             .send()
             .await
             .map_err(network)?;
-        let response = successful(response, token).await?;
+        let response = successful(super::response::decode(response), token).await?;
         if !response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -185,11 +199,13 @@ pub(super) async fn control<T: DeserializeOwned>(
     token: &str,
 ) -> Result<T, ProviderError> {
     let mut response = successful(
-        request
-            .timeout(Duration::from_secs(15))
-            .send()
-            .await
-            .map_err(network)?,
+        super::response::decode(
+            request
+                .timeout(Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(network)?,
+        ),
         token,
     )
     .await?;

@@ -2,16 +2,17 @@
 
 use crate::transport::{sent, unwrap_frame};
 use bytes::Bytes;
-use futures::Stream;
+use futures::{Stream, TryStreamExt};
 use gateway_core::{
     error::{ProviderError, ProviderErrorKind as Kind},
     event::{
         ContentItem, ContentKind, FinishReason, GatewayEvent, ProtocolWireEvent, ProviderEvent,
-        ResponseMeta, TextDelta,
+        ProviderResponseObservation, ProviderResponseTimings, ResponseMeta, TextDelta,
     },
     lifecycle::{CancellationToken, Deadline},
     metering::{ModelPriceOverride, Usage},
     routing::UpstreamModelId,
+    upstream::UpstreamTransport,
 };
 use gateway_protocol::{
     genai::{GENAI_PROTOCOL, GenerateContentObservation, GenerationFinish, primary_text_parts},
@@ -21,17 +22,60 @@ use gateway_protocol::{
 };
 use reqwest::Response;
 use serde_json::Value;
+use std::time::Instant;
+
+/// 仅 AGY 声明 gzip，解压后的字节继续受各消费方的大小限制和取消约束
+pub(super) fn decode(response: Response) -> Response {
+    use http_body_util::BodyExt;
+    if response
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .is_none_or(|value| value != "gzip")
+    {
+        return response;
+    }
+    // 不启用 reqwest 全局 gzip feature，避免 Cargo 特性合并改变其他 Provider 的请求画像
+    let response: http::Response<reqwest::Body> = response.into();
+    let (mut parts, body) = response.into_parts();
+    parts.headers.remove(reqwest::header::CONTENT_ENCODING);
+    parts.headers.remove(reqwest::header::CONTENT_LENGTH);
+    let stream = body.into_data_stream().map_err(std::io::Error::other);
+    let reader = tokio_util::io::StreamReader::new(stream);
+    let mut decoder = async_compression::tokio::bufread::GzipDecoder::new(reader);
+    decoder.multiple_members(true);
+    let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(decoder));
+    http::Response::from_parts(parts, body).into()
+}
+
+pub(crate) struct ResponseContext {
+    pub(crate) stream: bool,
+    pub(crate) model: UpstreamModelId,
+    pub(crate) deadline: Deadline,
+    pub(crate) cancel: CancellationToken,
+    pub(crate) token: String,
+    pub(crate) pricing: Option<ModelPriceOverride>,
+    pub(crate) started_at: Instant,
+}
 
 pub(crate) fn events(
     mut response: Response,
-    stream: bool,
-    model: UpstreamModelId,
-    deadline: Deadline,
-    cancel: CancellationToken,
-    token: String,
-    pricing: Option<ModelPriceOverride>,
+    context: ResponseContext,
 ) -> impl Stream<Item = Result<ProviderEvent, ProviderError>> + Send + 'static {
+    let ResponseContext {
+        stream,
+        model,
+        deadline,
+        cancel,
+        token,
+        pricing,
+        started_at,
+    } = context;
+    let headers_ms = elapsed_ms(started_at);
     async_stream::try_stream! {
+        let mut timings = ProviderResponseTimings { headers_ms: Some(headers_ms), ..Default::default() };
+        let observation = ProviderResponseObservation::new(
+            UpstreamTransport::new("http").map_err(|_| sent(Kind::ProviderInfrastructureUnavailable))?,
+        ).with_status_code(response.status().as_u16());
         let mut decoder = SseEventDecoder::default();
         let mut json_body = Vec::new();
         let mut observed = GenerateContentObservation::default();
@@ -81,6 +125,8 @@ pub(crate) fn events(
                 });
                 let usage = observed.observe(&value).map(usage);
                 let text = primary_text_parts(&value).collect::<String>();
+                let previous_timings = timings;
+                observe_timings(&mut timings, &value, elapsed_ms(started_at));
                 let wire = if stream {
                     let data = std::str::from_utf8(&inner).map_err(|_| sent(Kind::Protocol))?;
                     let raw = encode_sse_event_with_metadata(
@@ -93,6 +139,9 @@ pub(crate) fn events(
                     ProtocolWireEvent::raw_json(GENAI_PROTOCOL, inner)
                 }.map_err(|_| sent(Kind::Protocol))?;
                 let mut event = ProviderEvent::wire(wire);
+                if timings != previous_timings {
+                    event.attach_observation(observation.clone().with_timings(timings));
+                }
                 // 首批必须含可交付的协议帧，开始事实随首帧一起提交
                 if first_frame {
                     event = event.with_fact(GatewayEvent::Started(meta.clone()));
@@ -129,6 +178,50 @@ pub(crate) fn events(
     }
 }
 
+fn elapsed_ms(started_at: Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn observe_timings(timings: &mut ProviderResponseTimings, frame: &Value, elapsed: u64) {
+    timings.first_event_ms.get_or_insert(elapsed);
+    for part in frame
+        .get("candidates")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|candidate| {
+            candidate
+                .get("index")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                == 0
+        })
+        .filter_map(|candidate| {
+            candidate
+                .pointer("/content/parts")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+    {
+        // 空占位、签名及用量帧不算首字，工具调用本身属于可交付输出
+        if part
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty())
+        {
+            let first = if part.get("thought").and_then(Value::as_bool) == Some(true) {
+                &mut timings.first_reasoning_ms
+            } else {
+                &mut timings.first_text_ms
+            };
+            first.get_or_insert(elapsed);
+            timings.first_token_ms.get_or_insert(elapsed);
+        } else if part.get("functionCall").is_some_and(Value::is_object) {
+            timings.first_token_ms.get_or_insert(elapsed);
+        }
+    }
+}
+
 fn usage(facts: &gateway_protocol::genai::UsageMetadata) -> Usage {
     let mut usage = Usage::new();
     usage.input_tokens = facts.input_tokens();
@@ -149,7 +242,7 @@ fn finish_reason(ending: GenerationFinish<'_>) -> FinishReason {
             ..
         } => FinishReason::Length,
         GenerationFinish::Candidate {
-            reason: "STOP",
+            reason: "STOP" | "OTHER",
             tool_call: true,
         } => FinishReason::ToolCall,
         GenerationFinish::Candidate { reason: "STOP", .. } => FinishReason::Stop,

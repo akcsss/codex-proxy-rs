@@ -5,5 +5,5 @@ mod failure;
 mod response;
 pub(crate) use client::{Catalog, CloudCodeClient, unwrap_frame};
 pub(crate) use failure::{sent, unsent};
-pub(crate) use response::events;
+pub(crate) use response::{ResponseContext, events};
 pub(crate) mod account;

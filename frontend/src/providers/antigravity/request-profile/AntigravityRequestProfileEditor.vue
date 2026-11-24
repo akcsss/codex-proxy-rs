@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ProfileOptions, ProfilePreview, ProfileSelection } from './profile'
 import type { ProfileEditorProps } from '@/components/request-profile/useProfileEditor'
-import { ZFormItem, ZInput, ZSelect } from '@codex-proxy/ui'
+import { ZButton, ZFormItem, ZInput, ZSelect, ZTextarea } from '@codex-proxy/ui'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProfileEditorFrame from '@/components/request-profile/ProfileEditorFrame.vue'
@@ -34,6 +34,7 @@ const selectedPreset = computed({
     if (preset) {
       model.value = {
         ...preset.configuration,
+        systemPrompt: effective.value?.systemPrompt ?? null,
         versionMode: preset.automaticAvailable ? 'latest' : 'fixed',
       }
     }
@@ -59,6 +60,15 @@ const versionMode = computed({
 function updateVersion(value: string) {
   if (effective.value)
     model.value = { ...effective.value, clientVersion: value.trim() || null }
+}
+
+const systemPrompt = computed({
+  get: () => effective.value?.systemPrompt ?? options.value?.defaultSystemPrompt ?? '',
+  set: (value: string) => updateSystemPrompt(value),
+})
+function updateSystemPrompt(value: string | null) {
+  if (effective.value)
+    model.value = { ...effective.value, systemPrompt: value }
 }
 </script>
 
@@ -96,5 +106,22 @@ function updateVersion(value: string) {
         />
       </ZFormItem>
     </div>
+    <ZFormItem :label="t('settings.clientProfile.systemPrompt')">
+      <div class="grid gap-2">
+        <ZTextarea
+          v-model="systemPrompt"
+          :aria-label="t('settings.clientProfile.systemPrompt')"
+          :disabled="disabled || loading"
+          :rows="5"
+          resize="vertical"
+        />
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-z-sm text-z-text-secondary">{{ t('settings.clientProfile.systemPromptHint', { source: options?.systemPromptSource ?? '' }) }}</span>
+          <ZButton variant="link" size="small" :disabled="disabled || loading || effective?.systemPrompt == null" @click="updateSystemPrompt(null)">
+            {{ t('settings.clientProfile.restoreSystemPrompt') }}
+          </ZButton>
+        </div>
+      </div>
+    </ZFormItem>
   </ProfileEditorFrame>
 </template>

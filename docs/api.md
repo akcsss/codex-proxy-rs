@@ -258,6 +258,10 @@ Messages 与 Responses 的转换边界见 [Messages 请求](#messages-请求)，
 
 普通生成从上游 JSON 的 `response` 中取出原生正文，流式生成逐个解开 SSE 数据帧。原生正文保留工具参数、结果、思考签名和未知字段。客户端归属读取 `User-Agent`、`X-Goog-Api-Client`。网关错误使用 Google RPC 风格的 `error.code`、`error.status` 和 `error.message`。[Google 原生生成协议](https://ai.google.dev/api/generate-content)
 
+Antigravity 模型也可通过 `/v1/responses`、`/v1/chat/completions` 和 `/v1/messages` 调用，均支持 JSON 与 SSE。转换入口支持文本、内嵌图片／文档、函数工具及结果、生成参数和 JSON Schema；未知内容块返回请求错误，模型自身不支持的参数由上游校验。原生入口不经过转换器；所有 AGY 入口在出站时使用同一份系统提示词配置，替换客户端系统指令，其余原生字段保持原始表达
+
+工具多轮调用须带回完整助手输出。Responses 的 `reasoning.encrypted_content` 和 Messages 的 `thinking.signature` 携带 GenAI 工具与思考签名及其所属内容，客户端应原样回传。Chat 沿用现有合同，只返回可读思考内容；转换器对缺少签名的工具调用使用 Google 官方的 `skip_thought_signature_validator` 兜底值，不增加服务端签名缓存。工具与思考的真实签名优先于兜底；普通可见文本的可选签名不附加到转换输出，以保持 CLI 最终文本完整。省略签名或使用兜底可能影响后续模型表现，见 [Google 签名规则](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking/thought-signatures)。Antigravity 转换入口不支持 `previous_response_id` 续接
+
 ### Chat Completions 请求
 
 `POST /v1/chat/completions` 接受 Chat 消息历史，转换为 Responses 请求执行，再交付 Chat 格式结果。
@@ -1785,6 +1789,8 @@ OAuth start 使用：
 
 Antigravity 的全局客户端设置保存在 `providerRequestProfiles.antigravity`，Key 可用 `providerRequestProfileOverrides.antigravity` 覆盖。配置使用 `client`（`desktop` 或 `cli`）、`platform`（`macos`、`linux` 或 `windows`）、`versionMode`、`clientVersion` 和 `arch`。`arch: null` 使用预设架构：macOS 为 `arm64`，Linux 与 Windows 为 `amd64`；也可显式选择 `arm64` 或 `amd64`
 
+`systemPrompt` 可在 AGY 设置中编辑，省略、`null` 或空白值使用内置默认，最长 16 KiB。默认取自已核对的 AGY CLI 1.5.15 身份模板，不包含客户端专属工具和工作区模板；选项接口返回 `defaultSystemPrompt` 与 `systemPromptSource`，客户端版本轮询不会改写它。提示词随请求画像一起冻结，原生和转换入口均用它替换客户端的系统指令
+
 自动版本示例：
 
 ```json
@@ -1793,7 +1799,10 @@ Antigravity 的全局客户端设置保存在 `providerRequestProfiles.antigravi
 
 固定版本使用 `"versionMode":"fixed"`，并将 `clientVersion` 设为三段数字版本。Desktop 与 CLI 分别跟随各自的官方发布资料，各实例启动后检查，之后每 24 小时更新一次；检查失败保留上次成功结果，尚无结果时使用已核实的内置版本。请求开始时冻结客户端、平台、架构、版本及对应的 CL 构建号，重试沿用同一画像。发布资料不提供 CL，未知版本省略该字段，不套用旧版本的构建号。[Google 官方下载](https://antigravity.google/download)
 
-预览与实际出站请求共用 `User-Agent` 生成规则。本机 macOS arm64 的 Desktop 2.34.0 已认证请求为 `antigravity/hub/2.34.0 (aidev_client; os_type=darwin; arch=arm64; cl=1026637980)`；CLI 1.5.15 经 ACP 入口核实使用 `cli` 子客户端标识、CL `1027820220` 及 `auth_method=consumer`。默认身份不添加关闭遥测才出现的 `datacollection_opt_in` 或 ACP 宿主传入的 `host_path`；普通 CLI 交互入口的完整 UA 尚未单独捕获
+预览与实际出站请求共用 `User-Agent` 生成规则。本机 macOS arm64 的 Desktop 2.34.0 已认证请求为 `antigravity/hub/2.34.0 (aidev_client; os_type=darwin; arch=arm64; cl=1026637980)`；CLI 1.5.15 经 ACP 入口及打印模式的控制面请求核实使用 `cli` 子客户端标识、CL `1027820220` 及 `auth_method=consumer`。默认身份不添加关闭遥测才出现的 `datacollection_opt_in` 或 ACP 宿主传入的 `host_path`
+
+Cloud Code 请求固定使用 HTTP/1.1 和 `Accept-Encoding: gzip`，响应按流解压，大小限制作用于解压后的内容。
+传输显式使用 rustls，TLS 握手与官方 Go 客户端不同；reqwest 的默认 `Accept: */*` 和请求头顺序也不完全一致。画像预览不代表 TLS 或完整网络指纹一致
 
 Antigravity 使用 Desktop 个人账号的内置 OAuth 注册，授权请求携带 PKCE、离线访问和个人账号权限范围，凭据保存后按现有 OAuth 策略自动续期。部署配置无需提供 Google OAuth 参数
 

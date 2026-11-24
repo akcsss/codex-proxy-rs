@@ -101,6 +101,7 @@ pub(crate) struct Selection {
     pub(crate) version_mode: VersionMode,
     pub(crate) client_version: Option<String>,
     pub(crate) arch: Option<Architecture>,
+    pub(crate) system_prompt: Option<String>,
 }
 impl Default for Selection {
     fn default() -> Self {
@@ -110,14 +111,21 @@ impl Default for Selection {
             version_mode: VersionMode::Latest,
             client_version: None,
             arch: None,
+            system_prompt: None,
         }
     }
 }
 impl Selection {
     pub(crate) fn parse(value: &OpaqueProviderData) -> Result<Self, ProviderAdminError> {
-        let selection: Self =
+        let mut selection: Self =
             serde_json::from_value(Value::Object(value.expose_to_provider().clone()))
                 .map_err(|e| invalid().with_source(e))?;
+        if let Some(prompt) = &selection.system_prompt {
+            validate_system_prompt(prompt)?;
+            if prompt.trim().is_empty() {
+                selection.system_prompt = None;
+            }
+        }
         match (&selection.version_mode, &selection.client_version) {
             (VersionMode::Latest, None) => Ok(selection),
             (VersionMode::Fixed, Some(version)) if valid_version(version) => Ok(selection),
@@ -144,6 +152,11 @@ impl Selection {
             client_version: version.into(),
             // 发布资料只有版本号；未知版本不沿用另一个版本的构建号
             changelist: (version == baseline.version).then_some(baseline.changelist),
+            system_prompt: self
+                .system_prompt
+                .as_deref()
+                .unwrap_or(DEFAULT_SYSTEM_PROMPT)
+                .to_owned(),
         }
     }
 }
@@ -162,6 +175,7 @@ pub(crate) struct ClientProfile {
     pub(crate) arch: Architecture,
     pub(crate) client_version: String,
     changelist: Option<u64>,
+    pub(crate) system_prompt: String,
 }
 impl ClientProfile {
     pub(crate) fn from_frozen(value: &OpaqueProviderData) -> Result<Self, ProviderAdminError> {
@@ -171,6 +185,7 @@ impl ClientProfile {
         if !valid_version(&profile.client_version) || profile.changelist == Some(0) {
             return Err(invalid());
         }
+        validate_system_prompt(&profile.system_prompt)?;
         Ok(profile)
     }
     pub(crate) fn frozen(&self) -> OpaqueProviderData {
@@ -228,4 +243,15 @@ pub(crate) fn object(value: Value) -> OpaqueProviderData {
 fn invalid() -> ProviderAdminError {
     ProviderAdminError::new(ProviderAdminErrorKind::Invalid)
         .with_public_message("Antigravity 客户端配置无效；固定版本须为三段数字")
+}
+
+// AGY CLI 1.5.15 内置身份模板的默认交互分支；工具和工作区模板由各客户端管理
+pub(crate) const DEFAULT_SYSTEM_PROMPT: &str = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\nYou are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.";
+
+fn validate_system_prompt(prompt: &str) -> Result<(), ProviderAdminError> {
+    if prompt.len() > 16 * 1024 || prompt.contains('\0') {
+        return Err(ProviderAdminError::new(ProviderAdminErrorKind::Invalid)
+            .with_public_message("Antigravity 系统提示词不得超过 16 KiB 或包含空字符"));
+    }
+    Ok(())
 }

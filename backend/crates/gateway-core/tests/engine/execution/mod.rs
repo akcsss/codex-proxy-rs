@@ -5666,3 +5666,65 @@ fn cancelled_prepared_execution_records_rejection_without_admission_or_model_req
         assert!(store.requests.lock().unwrap().is_empty());
     });
 }
+
+struct EofResponseTranslator {
+    protocol: &'static str,
+}
+
+impl NativeResponseTranslator for EofResponseTranslator {
+    fn source_protocol(&self) -> &str {
+        "native-test"
+    }
+    fn target_protocol(&self) -> &str {
+        "openai"
+    }
+    fn translate(
+        &mut self,
+        _: &ProtocolWireEvent,
+    ) -> Result<Vec<ProtocolWireEvent>, ProviderError> {
+        Ok(Vec::new())
+    }
+    fn finish(&mut self) -> Result<Vec<ProtocolWireEvent>, ProviderError> {
+        Ok(vec![
+            ProtocolWireEvent::json(
+                self.protocol,
+                None,
+                json!({"type":"response.output_item.done"}),
+            )
+            .unwrap(),
+            ProtocolWireEvent::json(self.protocol, None, json!({"type":"response.completed"}))
+                .unwrap(),
+        ])
+    }
+}
+
+#[test]
+fn eof_translation_preserves_terminal_facts_and_validates_output_protocol() {
+    for protocol in ["openai", "foreign"] {
+        let metadata = ProviderCallMetadata::new(
+            ProviderKind::new("fixture").unwrap(),
+            UpstreamModelId::new("model").unwrap(),
+            ProviderAccountId::new("acct_fixture").unwrap(),
+            UpstreamTransport::new("http").unwrap(),
+        );
+        let mut stream = ProviderStream::new(metadata, futures::stream::empty(), ())
+            .with_native_response_translator(EofResponseTranslator { protocol });
+        let result = stream.translate_native_response(
+            ProviderEvent::canonical(GatewayEvent::Completed(ResponseMeta::new(
+                "response", "model",
+            ))),
+            true,
+        );
+        if protocol == "foreign" {
+            assert!(result.is_err());
+            continue;
+        }
+        let events = result.unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events[0].canonical_facts().is_empty());
+        assert!(matches!(
+            events[1].canonical_facts(),
+            [GatewayEvent::Completed(_)]
+        ));
+    }
+}

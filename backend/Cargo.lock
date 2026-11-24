@@ -3381,6 +3381,7 @@ dependencies = [
 name = "provider-antigravity"
 version = "0.0.0"
 dependencies = [
+ "async-compression",
  "async-stream",
  "async-trait",
  "base64 0.23.1",
@@ -3392,12 +3393,15 @@ dependencies = [
  "gateway-egress",
  "gateway-protocol",
  "getrandom 0.4.3",
+ "http",
+ "http-body-util",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "uuid",

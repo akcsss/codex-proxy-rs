@@ -902,61 +902,80 @@ fn account_model_access_filters_catalog_and_aliases_using_the_whole_frozen_pool(
 
 #[test]
 fn generation_routes_only_to_models_that_accept_the_wire_and_the_key() {
-    let provider = |name| ProviderKind::new(name).unwrap();
-    let snapshot = RuntimeSnapshot::new(
-        ConfigRevision::new(1).unwrap(),
-        settings(),
-        vec![provider("openai"), provider("xai")],
-        vec![
-            model("openai", "shared", capabilities()),
-            model(
-                "xai",
-                "shared",
-                capabilities().with_generation_protocol("native-test"),
-            ),
-        ],
-        vec![],
-    )
-    .unwrap()
-    .with_account_directory(account_directory());
-    let public = PublicModelId::new("shared").unwrap();
-    let native = Operation::Generate(
-        GenerateRequest::from_protocol_payload(
-            ProtocolPayload::json_object("native-test", Default::default()).unwrap(),
+    for translated in [false, true] {
+        let provider = |name| ProviderKind::new(name).unwrap();
+        let snapshot = RuntimeSnapshot::new(
+            ConfigRevision::new(1).unwrap(),
+            settings(),
+            vec![provider("openai"), provider("xai")],
+            vec![
+                model("openai", "shared", capabilities()),
+                model(
+                    "xai",
+                    "shared",
+                    capabilities()
+                        .with_generation_protocol("native-test")
+                        .with_translated_generation_protocols(if translated {
+                            vec!["openai"]
+                        } else {
+                            Vec::new()
+                        }),
+                ),
+            ],
+            vec![],
         )
-        .requiring_native_protocol(),
-    );
-    for (request, expected) in [(operation(), "openai"), (native.clone(), "xai")] {
-        let plan = snapshot
-            .plan(
-                &public,
-                &request,
-                account_scope(),
-                &RoutingContext::default(),
+        .unwrap()
+        .with_account_directory(account_directory());
+        let public = PublicModelId::new("shared").unwrap();
+        let native = Operation::Generate(
+            GenerateRequest::from_protocol_payload(
+                ProtocolPayload::json_object("native-test", Default::default()).unwrap(),
             )
-            .unwrap();
-        let actual: Vec<_> = plan
-            .candidates()
-            .iter()
-            .map(|c| c.provider().as_str())
-            .collect();
-        assert_eq!(actual, [expected]);
+            .requiring_native_protocol(),
+        );
+        for (request, expected) in [
+            (
+                operation(),
+                if translated {
+                    vec!["openai", "xai"]
+                } else {
+                    vec!["openai"]
+                },
+            ),
+            (native.clone(), vec!["xai"]),
+        ] {
+            let plan = snapshot
+                .plan(
+                    &public,
+                    &request,
+                    account_scope(),
+                    &RoutingContext::default(),
+                )
+                .unwrap();
+            let actual: Vec<_> = plan
+                .candidates()
+                .iter()
+                .map(|c| c.provider().as_str())
+                .collect();
+            assert_eq!(actual, expected);
+        }
+        let restricted = Arc::new(
+            account_scope().restricted_to(&[provider("openai")].into(), &Default::default()),
+        );
+        assert!(
+            snapshot
+                .plan(&public, &native, restricted, &RoutingContext::default())
+                .is_err()
+        );
+        assert!(
+            snapshot
+                .plan(
+                    &PublicModelId::new("unknown").unwrap(),
+                    &native,
+                    account_scope(),
+                    &RoutingContext::default()
+                )
+                .is_err()
+        );
     }
-    let restricted =
-        Arc::new(account_scope().restricted_to(&[provider("openai")].into(), &Default::default()));
-    assert!(
-        snapshot
-            .plan(&public, &native, restricted, &RoutingContext::default())
-            .is_err()
-    );
-    assert!(
-        snapshot
-            .plan(
-                &PublicModelId::new("unknown").unwrap(),
-                &native,
-                account_scope(),
-                &RoutingContext::default()
-            )
-            .is_err()
-    );
 }

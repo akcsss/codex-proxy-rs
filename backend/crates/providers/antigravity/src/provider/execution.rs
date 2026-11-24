@@ -24,7 +24,12 @@ impl AntigravityProvider {
         request: ProviderRequest,
         ctx: AttemptContext,
     ) -> Result<ProviderStream, ProviderError> {
-        if request.operation().protocol() != GENAI_PROTOCOL {
+        if !matches!(
+            request.operation().protocol(),
+            GENAI_PROTOCOL
+                | gateway_protocol::openai::OPENAI_PROTOCOL
+                | gateway_protocol::anthropic::ANTHROPIC_PROTOCOL
+        ) {
             return Err(unsent(Kind::Unsupported));
         }
         let model = request
@@ -60,6 +65,7 @@ impl AntigravityProvider {
         )));
         let cancellation = ctx.cancellation().clone();
         let deadline = ctx.deadline();
+        let started_at = ctx.timing_started_at();
         let records_account_feedback = ctx
             .account_eligibility()
             .allows_account_state_mutation(selected.account.enabled());
@@ -77,6 +83,7 @@ impl AntigravityProvider {
             Some(model.as_str().to_owned()),
             selected.account.id().clone(),
             Box::new(move |operation, headers| Box::pin(async move {
+                let (operation, translator) = super::translation::prepare(operation)?;
                 let Operation::Generate(generate) = &operation else {
                     return Err(unsent(Kind::Unsupported));
                 };
@@ -116,7 +123,10 @@ impl AntigravityProvider {
                         Err(error) => Err(record_failure(error).await)?,
                     };
                     let events = crate::transport::events(
-                        response, stream, model.clone(), deadline, cancellation, selected.material.access_token, pricing,
+                        response, crate::transport::ResponseContext {
+                            stream, model: model.clone(), deadline, cancel: cancellation,
+                            token: selected.material.access_token, pricing, started_at,
+                        },
                     );
                     futures::pin_mut!(events);
                     while let Some(event) = events.next().await {
@@ -127,6 +137,10 @@ impl AntigravityProvider {
                     }
                 };
                 let stream = ProviderStream::new(metadata, Box::pin(events), selected.lease);
+                let stream = match translator {
+                    Some(translator) => stream.with_native_response_translator(translator),
+                    None => stream,
+                };
                 Ok(match stats {
                     Some(stats) => stream.with_account_feedback(stats),
                     None => stream,

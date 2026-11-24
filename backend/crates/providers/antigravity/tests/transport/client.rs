@@ -31,11 +31,17 @@ async fn oauth_refresh_and_native_generate_preserve_grant_profile_and_wire_paylo
             .and(path(p))
             .and(header("authorization", "Bearer renewed-access"))
             .and(header("user-agent", user_agent))
+            .and(header("accept", "*/*"))
+            .and(header("accept-encoding", "gzip"))
     };
     post("/v1internal:loadCodeAssist")
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"cloudaicompanionProject":"project-1"})),
+            compressed_response(
+                200,
+                br#"{"cloudaicompanionProject":"project-1"}"#,
+                "application/json",
+            )
+            .await,
         )
         .expect(1)
         .mount(&server)
@@ -53,18 +59,35 @@ async fn oauth_refresh_and_native_generate_preserve_grant_profile_and_wire_paylo
         .await;
     let catalog = client.catalog(&access_token).await.unwrap();
     assert_eq!(catalog.models["fixture-model"].name, "Fixture Model");
-    let body=br#"{ "contents":[{"parts":[{"functionResponse":{"name":"lookup","response":{"x":1}},"thoughtSignature":"opaque"}]}],"unknown":98765432109876543210987654 }"#;
+    let body=br#"{ "contents":[{"parts":[{"functionResponse":{"name":"lookup","response":{"x":1}},"thoughtSignature":"opaque"}]}],"unknown":98765432109876543210987654,"systemInstruction":{"parts":[{"text":"You are Claude Code."}]},"system_instruction":{"parts":[{"text":"old"}]} }"#;
     let reply = r#"{ "responseId":"r","candidates":[{"content":{"parts":[{"text":"hidden","thought":true},{"text":"ok"},{"functionCall":{"name":"lookup","args":{"text":"not output"}}}]},"finishReason":"STOP"},{"index":1,"content":{"parts":[{"text":"other candidate"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2},"extra":98765432109876543210987654 }"#;
     let received_body = move |r: &wiremock::Request| {
-        r.body.windows(body.len()).any(|w| w == body)
-            && String::from_utf8_lossy(&r.body)
-                .starts_with(r#"{"project":"project-1","model":"fixture-model","request":"#)
+        let envelope: std::collections::BTreeMap<String, &serde_json::value::RawValue> =
+            serde_json::from_slice(&r.body).unwrap();
+        let request: std::collections::BTreeMap<String, &serde_json::value::RawValue> =
+            serde_json::from_str(envelope["request"].get()).unwrap();
+        let original: std::collections::BTreeMap<String, &serde_json::value::RawValue> =
+            serde_json::from_slice(body).unwrap();
+        let system: serde_json::Value =
+            serde_json::from_str(request["systemInstruction"].get()).unwrap();
+        request["contents"].get() == original["contents"].get()
+            && request["unknown"].get() == original["unknown"].get()
+            && !request.contains_key("system_instruction")
+            && system["parts"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("You are Antigravity,")
+            && !system.to_string().contains("Claude Code")
     };
     post("/v1internal:generateContent")
         .and(received_body)
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(format!(r#"{{"response":{reply}}}"#), "application/json"),
+            compressed_response(
+                200,
+                format!(r#"{{"response":{reply}}}"#).as_bytes(),
+                "application/json",
+            )
+            .await,
         )
         .expect(1)
         .mount(&server)
@@ -72,10 +95,14 @@ async fn oauth_refresh_and_native_generate_preserve_grant_profile_and_wire_paylo
     post("/v1internal:streamGenerateContent")
         .and(query_param("alt", "sse"))
         .and(received_body)
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            format!("id: evt-1\ndata: {{\"response\":{reply}}}\n\n"),
-            "text/event-stream",
-        ))
+        .respond_with(
+            compressed_response(
+                200,
+                format!("id: evt-1\ndata: {{\"response\":{reply}}}\n\n").as_bytes(),
+                "text/event-stream",
+            )
+            .await,
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -93,12 +120,15 @@ async fn oauth_refresh_and_native_generate_preserve_grant_profile_and_wire_paylo
             .unwrap();
         let events = transport::events(
             res,
-            stream,
-            UpstreamModelId::new("fixture-model").unwrap(),
-            Deadline::default(),
-            CancellationToken::new(),
-            access_token.clone(),
-            None,
+            transport::ResponseContext {
+                stream,
+                model: UpstreamModelId::new("fixture-model").unwrap(),
+                deadline: Deadline::default(),
+                cancel: CancellationToken::new(),
+                token: access_token.clone(),
+                pricing: None,
+                started_at: std::time::Instant::now(),
+            },
         )
         .try_collect::<Vec<_>>()
         .await
@@ -144,6 +174,7 @@ async fn streamed_text_is_projected_once_across_native_frames() {
     let profile = profile::default_profile(&ReleaseService::new().unwrap());
     let client = CloudCodeClient::new(&server.uri().parse().unwrap(), None, &profile).unwrap();
     let frames = [
+        json!({"candidates":[{"content":{"parts":[{"text":""}]}}]}),
         json!({"responseId":"r","candidates":[{"content":{"parts":[{"text":"hidden","thought":true}]}}]}),
         json!({"candidates":[{"index":1,"content":{"parts":[{"text":"other"}]},"finishReason":"STOP"},{"index":0,"content":{"parts":[{"text":"O"}]}}]}),
         json!({"candidates":[{"index":0,"content":{"parts":[{"text":"K"}]},"finishReason":"STOP"}]}),
@@ -164,12 +195,15 @@ async fn streamed_text_is_projected_once_across_native_frames() {
         .unwrap();
     let events = transport::events(
         response,
-        true,
-        UpstreamModelId::new("m").unwrap(),
-        Deadline::default(),
-        CancellationToken::new(),
-        "fixture".into(),
-        None,
+        transport::ResponseContext {
+            stream: true,
+            model: UpstreamModelId::new("m").unwrap(),
+            deadline: Deadline::default(),
+            cancel: CancellationToken::new(),
+            token: "fixture".into(),
+            pricing: None,
+            started_at: std::time::Instant::now(),
+        },
     )
     .try_collect::<Vec<_>>()
     .await
@@ -187,6 +221,17 @@ async fn streamed_text_is_projected_once_across_native_frames() {
     }
     assert_eq!(content_count, 1);
     assert_eq!(text, "OK");
+    let timings: Vec<_> = events
+        .iter()
+        .filter_map(|event| event.response_observation())
+        .map(|observation| observation.timings())
+        .collect();
+    assert!(timings[0].headers_ms.is_some());
+    assert!(timings[0].first_event_ms.is_some());
+    assert!(timings[0].first_token_ms.is_none());
+    assert!(timings[1].first_reasoning_ms.is_some());
+    assert!(timings[1].first_text_ms.is_none());
+    assert!(timings[2].first_text_ms.is_some());
     let wire: Vec<_> = events
         .iter()
         .filter_map(|event| event.wire_event())
@@ -212,12 +257,15 @@ async fn incomplete_native_stream_and_redirect_are_rejected() {
         .unwrap();
     let result = transport::events(
         res,
-        true,
-        UpstreamModelId::new("m").unwrap(),
-        Deadline::default(),
-        CancellationToken::new(),
-        "fixture".into(),
-        None,
+        transport::ResponseContext {
+            stream: true,
+            model: UpstreamModelId::new("m").unwrap(),
+            deadline: Deadline::default(),
+            cancel: CancellationToken::new(),
+            token: "fixture".into(),
+            pricing: None,
+            started_at: std::time::Instant::now(),
+        },
     )
     .try_collect::<Vec<_>>()
     .await;
@@ -256,12 +304,15 @@ async fn incomplete_stream_never_emits_a_calculated_cost() {
     let response = reqwest::get(server.uri()).await.unwrap();
     let events = transport::events(
         response,
-        true,
-        UpstreamModelId::new("fixture-model").unwrap(),
-        Deadline::default(),
-        CancellationToken::new(),
-        "fixture".into(),
-        Some(crate::billing_tests::pricing()),
+        transport::ResponseContext {
+            stream: true,
+            model: UpstreamModelId::new("fixture-model").unwrap(),
+            deadline: Deadline::default(),
+            cancel: CancellationToken::new(),
+            token: "fixture".into(),
+            pricing: Some(crate::billing_tests::pricing()),
+            started_at: std::time::Instant::now(),
+        },
     )
     .collect::<Vec<_>>()
     .await;
@@ -276,4 +327,61 @@ async fn incomplete_stream_never_emits_a_calculated_cost() {
             .flat_map(|event| event.canonical_facts())
             .any(|fact| matches!(fact, GatewayEvent::CalculatedCost(_)))
     );
+}
+
+async fn compressed_response(status: u16, body: &[u8], media: &str) -> ResponseTemplate {
+    use tokio::io::AsyncWriteExt;
+    let mut compressed = Vec::new();
+    // 覆盖多个 gzip member，后半段包含协议完成与用量，不能被解码器提前截断
+    for part in body.chunks(body.len().div_ceil(2)) {
+        let mut encoder = async_compression::tokio::write::GzipEncoder::new(Vec::new());
+        encoder.write_all(part).await.unwrap();
+        encoder.shutdown().await.unwrap();
+        compressed.extend(encoder.into_inner());
+    }
+    ResponseTemplate::new(status)
+        .insert_header("content-encoding", "gzip")
+        .set_body_raw(compressed, media)
+}
+
+#[tokio::test]
+async fn compressed_control_responses_keep_errors_and_decoded_size_limits() {
+    use gateway_core::error::ProviderErrorKind;
+    let server = MockServer::start().await;
+    let profile = profile::default_profile(&ReleaseService::new().unwrap());
+    let client = CloudCodeClient::new(&server.uri().parse().unwrap(), None, &profile).unwrap();
+    Mock::given(path("/v1internal:loadCodeAssist"))
+        .respond_with(
+            compressed_response(
+                429,
+                br#"{"error":{"message":"fixture quota"}}"#,
+                "application/json",
+            )
+            .await,
+        )
+        .mount(&server)
+        .await;
+    let error = client.catalog("fixture").await.err().unwrap();
+    assert_eq!(error.kind(), ProviderErrorKind::RateLimited);
+    assert_eq!(error.upstream_status(), Some(429));
+    server.reset().await;
+    Mock::given(path("/v1internal:loadCodeAssist"))
+        .respond_with(
+            compressed_response(200, &vec![b' '; 8 * 1024 * 1024 + 1], "application/json").await,
+        )
+        .mount(&server)
+        .await;
+    let error = client.catalog("fixture").await.err().unwrap();
+    assert_eq!(error.kind(), ProviderErrorKind::MessageTooBig);
+    server.reset().await;
+    Mock::given(path("/v1internal:loadCodeAssist"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-encoding", "gzip")
+                .set_body_raw("invalid gzip", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let error = client.catalog("fixture").await.err().unwrap();
+    assert_eq!(error.kind(), ProviderErrorKind::Transport);
 }
