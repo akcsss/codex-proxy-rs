@@ -13,7 +13,6 @@ const { t } = useI18n({ useScope: 'global' })
 
 const accountAffinity = defineModel<AccountAffinity | ''>({ required: true })
 const affinityTtlHours = defineModel<string>('ttlHours', { required: true })
-const maxAccountRotations = defineModel<string>('maxAccountRotations', { required: true })
 const affinityOptions = computed(() => ([
   {
     label: t('settings.affinity.modes.relaxed'),
@@ -31,9 +30,9 @@ const affinityOptions = computed(() => ([
 </script>
 
 <template>
-  <ZCard :title="t('settings.affinity.title')">
-    <div class="grid min-w-0 gap-4.5 max-w-6xl sm:grid-cols-2 lg:grid-cols-3">
-      <ZFormItem :show-message="false" prop="openaiAccountAffinity" :label="t('settings.affinity.mode')" :description="t('settings.affinity.description')">
+  <ZCard :title="t('settings.affinity.title')" :description="t('settings.affinity.description')" class="@container">
+    <div class="grid min-w-0 gap-4.5 @md:grid-cols-2 @md:items-end">
+      <ZFormItem :show-message="false" prop="openaiAccountAffinity" :label="t('settings.affinity.mode')" :description="t('settings.affinity.policyHelp')">
         <template #label-extra>
           <ZPopover class="-my-1" trigger="hover-click" placement="top-start">
             <template #reference="{ open }">
@@ -45,7 +44,6 @@ const affinityOptions = computed(() => ([
               <p>{{ t('settings.affinity.modes.relaxedHelp') }}</p>
               <p>{{ t('settings.affinity.modes.preferredHelp') }}</p>
               <p>{{ t('settings.affinity.modes.strictHelp') }}</p>
-              <p>{{ t('settings.affinity.policyHelp') }}</p>
             </div>
           </ZPopover>
         </template>
@@ -57,9 +55,6 @@ const affinityOptions = computed(() => ([
             {{ t('settings.affinity.hours') }}
           </template>
         </ZInput>
-      </ZFormItem>
-      <ZFormItem :show-message="Boolean(maxAccountRotations.trim())" prop="maxAccountRotations" :label="t('settings.affinity.maxAccountSwitches')" :description="t('settings.affinity.switchLimitHelp')">
-        <ZInput v-model="maxAccountRotations" :aria-label="t('settings.affinity.maxAccountSwitches')" type="number" min="0" max="31" step="1" :disabled="props.disabled" />
       </ZFormItem>
     </div>
   </ZCard>

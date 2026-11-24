@@ -81,8 +81,8 @@ use provider_openai::credential::{
     CodexCookiePolicy, CodexCredentialCatalogService, CodexCredentialQuotaService,
     CodexCredentialSelector, ImportCodexOAuthCredential,
 };
+use provider_openai::profile::{CodexWireProfile, CodexWireProfileState};
 use provider_openai::transport::CodexWebSocketPool;
-use provider_openai::transport::profile::{CodexWireProfile, CodexWireProfileState};
 use provider_openai::{CodexProvider, OFFICIAL_CODEX_BASE_URL};
 use serde_json::{Map, Value, json};
 use tokio::{
@@ -1150,7 +1150,7 @@ fn selected_account_log_fields<'events>(
 
 fn wire_profile() -> CodexWireProfileState {
     CodexWireProfileState::new(CodexWireProfile {
-        client_kind: provider_openai::transport::profile::selection::ClientKind::Desktop,
+        client_kind: provider_openai::profile::selection::ClientKind::Desktop,
         originator: "codex_cli_rs".to_owned(),
         codex_version: "0.144.0".to_owned(),
         desktop_version: "1.0.0".to_owned(),

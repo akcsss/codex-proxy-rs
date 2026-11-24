@@ -5,7 +5,7 @@ import { ref, shallowRef, watch } from 'vue'
 import { batchUpdateAccounts } from '@/api'
 import { useAsyncAction } from '@/composables/useAsyncAction'
 import { t } from '@/i18n'
-import { notification as ZNotification } from '@/utils/notification'
+import { notification as ZNotification } from '@/plugins/notification'
 import { accountSchedulingValues, concurrencyLimitInput } from '../utils/schedulingForm'
 
 export function useAccountBatchEditor(options: {

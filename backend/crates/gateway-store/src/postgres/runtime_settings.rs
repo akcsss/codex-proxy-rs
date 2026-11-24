@@ -232,6 +232,7 @@ impl ProviderRuntimePolicyPort for PgRuntimeSettingsRepository {
                 "update runtime_settings set
                     provider_request_profiles_json = case when provider_request_profiles_json ? $1 then provider_request_profiles_json
                         else jsonb_set(provider_request_profiles_json, array[$1], $2) end,
+                    settings_revision = case when provider_request_profiles_json ? $1 then settings_revision else config_revision + 1 end,
                     config_revision = config_revision + case when provider_request_profiles_json ? $1 then 0 else 1 end
                  where id = 1 returning provider_request_profiles_json -> $1"
             )
@@ -385,6 +386,7 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     let next = sqlx::query_scalar::<_, i64>(
         "update runtime_settings
              set config_revision = config_revision + 1,
+                 settings_revision = config_revision + 1,
 	                 refresh_margin_seconds = $1,
 	                 refresh_concurrency = $2,
 	                 max_concurrent_per_account = $3,

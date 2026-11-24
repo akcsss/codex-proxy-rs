@@ -2,7 +2,7 @@ import type { FormRule, FormRules } from '@codex-proxy/ui'
 import type { useSettingsForm } from './useSettingsForm'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { protectionPolicyError, trimProtectionText } from '../components/error-protection/form'
+import { protectionPolicyError, trimProtectionText } from '../components/error-protection/policy'
 import { isSemver } from '../utils/version'
 
 type SettingsForm = ReturnType<typeof useSettingsForm>['form']

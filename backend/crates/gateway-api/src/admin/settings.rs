@@ -1,6 +1,6 @@
 //! 管理端运行设置、模型定价与 Admin API Key 的 HTTP 接口
 
-use crate::auth::SessionState;
+use crate::SessionState;
 
 use std::{collections::BTreeMap, fmt};
 
@@ -359,7 +359,7 @@ where
     Ok(AdminResponse::new(
         StatusCode::OK,
         AdminEnvelope::ok(serde_json::json!({
-            "defaults": pricing.defaults, "overrides": pricing.overrides,
+            "supportedBands": pricing.supported_bands, "defaults": pricing.defaults, "overrides": pricing.overrides,
             "synced": pricing.synced, "syncedAt": pricing.synced_at,
             "syncedAtDisplay": pricing.synced_at.as_ref().map(|value| crate::time::TimePresenter::new(state.admin_services().timezone()).datetime(value)),
         })),
@@ -601,9 +601,6 @@ fn normalize_request_profile_updates(
     profiles
         .into_iter()
         .map(|(provider, profile)| {
-            if !matches!(provider.as_str(), "openai" | "xai") {
-                return Err(WireValidationError::new("providerRequestProfiles"));
-            }
             let provider = gateway_core::routing::ProviderKind::new(provider)
                 .map_err(|_| WireValidationError::new("providerRequestProfiles"))?;
             Ok((

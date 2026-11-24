@@ -1,13 +1,14 @@
 import type { RequestOptions } from '../../request'
 import type { RequestLocation, RequestLocationDetection } from '../../types/location'
+import type { ProviderRequestProfiles, ProviderRequestProfileUpdates } from '../../types/request-profile'
 import type { CodexPrivacyPolicy } from './privacy'
-import type { ProviderRequestProfiles, ProviderRequestProfileUpdates } from './profiles'
 import type { AccountErrorProtection } from './protection'
 import request from '../../request'
 
 export * from './backups'
 export * from './pricing'
 export * from './privacy'
+export * from './profiles'
 export * from './protection'
 export * from './system'
 

@@ -797,7 +797,7 @@ fn image_response_metering(
         .and_then(Value::as_u64);
     // 总量是上游独立报告的事实；图片明细是总输入/输出的子集，不能再次相加
     usage.total_tokens = raw.get("total_tokens").and_then(Value::as_u64);
-    let cost = crate::transport::usage::image_calculated_cost(request_body, &raw, prices);
+    let cost = crate::billing::image_calculated_cost(request_body, &raw, prices);
     (usage != Usage::default()).then_some((usage, cost))
 }
 

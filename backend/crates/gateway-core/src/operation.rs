@@ -216,6 +216,7 @@ impl fmt::Debug for ProviderSessionState {
 pub struct ProtocolPayload {
     protocol: String,
     body: Map<String, Value>,
+    raw_json_body: Option<Bytes>,
     context: Map<String, Value>,
 }
 
@@ -236,8 +237,27 @@ impl ProtocolPayload {
         Ok(Self {
             protocol,
             body,
+            raw_json_body: None,
             context: Map::new(),
         })
+    }
+
+    /// 只解析一次入站正文，保证路由使用的字段和透传字节来自同一份请求
+    pub fn from_json_bytes(
+        protocol: impl Into<String>,
+        body: Bytes,
+    ) -> Result<Self, OperationError> {
+        let object = serde_json::from_slice(&body).map_err(|_| OperationError::EmptyField {
+            field: "protocol_payload body",
+        })?;
+        let mut payload = Self::json_object(protocol, object)?;
+        payload.raw_json_body = Some(body);
+        Ok(payload)
+    }
+
+    #[must_use]
+    pub fn raw_json_body(&self) -> Option<&Bytes> {
+        self.raw_json_body.as_ref()
     }
 
     /// 返回协议名称
@@ -420,6 +440,7 @@ pub struct GenerateRequest {
 
 #[derive(Clone, PartialEq)]
 struct GeneratePayload {
+    requires_native_protocol: bool,
     source_image_generation: bool,
     wire_facts: RequestFacts,
     protocol_payload: ProtocolPayload,
@@ -464,6 +485,7 @@ impl GenerateRequest {
     pub fn from_protocol_payload(protocol_payload: ProtocolPayload) -> Self {
         Self {
             payload: Arc::new(GeneratePayload {
+                requires_native_protocol: false,
                 source_image_generation: false,
                 wire_facts: request_facts(protocol_payload.protocol(), protocol_payload.body()),
                 protocol_payload,
@@ -473,6 +495,18 @@ impl GenerateRequest {
                 inherited_capability_requirements: None,
             }),
         }
+    }
+
+    /// 原生入口只接受模型目录明确声明的生成协议
+    #[must_use]
+    pub fn requiring_native_protocol(mut self) -> Self {
+        Arc::make_mut(&mut self.payload).requires_native_protocol = true;
+        self
+    }
+
+    #[must_use]
+    pub fn requires_native_protocol(&self) -> bool {
+        self.payload.requires_native_protocol
     }
 
     #[must_use]
@@ -890,6 +924,11 @@ impl Operation {
     /// 生成请求的 JSON object 无法编码时返回错误
     pub fn middleware_body(&self) -> Result<Bytes, OperationError> {
         match self {
+            Self::Generate(request)
+                if let Some(body) = request.protocol_payload().raw_json_body() =>
+            {
+                Ok(body.clone())
+            }
             Self::Generate(request) => serde_json::to_vec(request.protocol_payload().body())
                 .map(Bytes::from)
                 .map_err(|_| OperationError::EmptyField {
@@ -1001,7 +1040,7 @@ impl Operation {
                 // 修改上下文不改变正文事实；只有新 wire 才需要重新扫描输入
                 let mut payload = Arc::unwrap_or_clone(request.payload);
                 if let Some(body) = body {
-                    let body =
+                    let object =
                         serde_json::from_slice::<Map<String, Value>>(&body).map_err(|_| {
                             OperationError::EmptyField {
                                 field: "protocol_payload body",
@@ -1010,8 +1049,12 @@ impl Operation {
                     if let Some(protocol) = target_protocol {
                         payload.protocol_payload.protocol = protocol;
                     }
-                    payload.wire_facts = request_facts(payload.protocol_payload.protocol(), &body);
-                    payload.protocol_payload.body = body;
+                    payload.wire_facts =
+                        request_facts(payload.protocol_payload.protocol(), &object);
+                    if payload.protocol_payload.raw_json_body.is_some() {
+                        payload.protocol_payload.raw_json_body = Some(body);
+                    }
+                    payload.protocol_payload.body = object;
                 }
                 payload.protocol_payload.context = context;
                 // 跨协议转换不能抹去已识别的生图权限要求，也不解释目标私有协议

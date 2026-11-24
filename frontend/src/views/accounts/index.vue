@@ -6,18 +6,18 @@ import { useTableColumns, ZCard, ZCheckbox, ZConfirmDialog, ZIconButton, ZPageHe
 import { ChevronDown } from '@lucide/vue'
 import { ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AccountPlanBadge from '@/components/account/AccountPlanBadge.vue'
+import AccountPlanBadge from '@/components/account-plan-badge/index.vue'
 import AccountGroupMarks from '@/components/AccountGroupMarks.vue'
 import LastUsedAtCell from '@/components/LastUsedAtCell.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import { useAccountGroupCatalog } from '@/composables/useAccountGroupCatalog'
+import AccountConcurrencyModal from './components/account-concurrency-modal/index.vue'
 import AccountCreateModal from './components/account-create-modal/index.vue'
 import AccountImportTasks from './components/account-import-tasks/index.vue'
 import AccountQuotaPanel from './components/account-quota-panel/index.vue'
 import AccountQuotaSummaryCell from './components/account-quota-summary-cell/index.vue'
 import AccountStatusBadge from './components/account-status-badge/index.vue'
 import AccountBatchEditModal from './components/AccountBatchEditModal.vue'
-import AccountConcurrencyModal from './components/AccountConcurrencyModal.vue'
 import AccountConnectionTestModal from './components/AccountConnectionTestModal.vue'
 import AccountEditModal from './components/AccountEditModal.vue'
 import AccountFilters from './components/AccountFilters.vue'
@@ -188,9 +188,6 @@ const {
 })
 
 const {
-  apiKey: editingApiKey,
-  oauthTransport: editingOAuthTransport,
-  configurationReady,
   showEditModal,
   editingAccount,
   name: editingName,
@@ -205,7 +202,6 @@ const {
   saving: savingAccountEdit,
   open: openAccountEdit,
   save: saveAccountEdit,
-  clearCredentials,
 } = useAccountEditor({
   reloadAccounts: loadAccounts,
   reloadGroups: loadGroups,
@@ -441,8 +437,6 @@ const {
 
     <AccountEditModal
       v-model="showEditModal"
-      v-model:api-key="editingApiKey"
-      v-model:oauth-transport="editingOAuthTransport"
       v-model:name="editingName"
       v-model:notes="editingNotes"
       v-model:enabled="schedulingEnabled"
@@ -452,13 +446,11 @@ const {
       v-model:proxy-mode="editingProxyMode"
       v-model:proxy-id="editingProxyId"
       v-model:selected-group-ids="editingGroupIds"
-      :configuration-ready="configurationReady"
       :account="editingAccount"
       :groups="groups"
       :groups-loading="groupsLoading"
       :saving="savingAccountEdit"
       @save="saveAccountEdit"
-      @after-leave="clearCredentials"
     />
 
     <AccountBatchEditModal

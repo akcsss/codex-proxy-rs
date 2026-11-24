@@ -294,6 +294,7 @@ pub struct ModelPriceOverride {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PricingCatalog {
+    pub supported_bands: BTreeMap<String, Vec<String>>,
     pub defaults: PricingOverrides,
     pub overrides: PricingOverrides,
     pub synced: PricingOverrides,

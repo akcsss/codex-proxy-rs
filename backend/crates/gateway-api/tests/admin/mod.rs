@@ -72,7 +72,7 @@ use gateway_admin::{
         },
     },
 };
-use gateway_api::auth::SessionState;
+use gateway_api::SessionState;
 use gateway_core::{
     account::FastMode,
     account::{AccountStatusFacts, CredentialState, ProviderAccountId, QuotaState},
@@ -516,6 +516,7 @@ struct StaticPricingSource;
 impl gateway_admin::ports::pricing::PricingSource for StaticPricingSource {
     async fn fetch(
         &self,
+        _: &gateway_admin::ports::pricing::PricingSourceScope,
     ) -> Result<gateway_admin::model::pricing::PricingSyncPreview, gateway_admin::model::AdminError>
     {
         Ok(gateway_admin::model::pricing::PricingSyncPreview {
@@ -1323,7 +1324,7 @@ impl AccountStore for UnusedStore {
     async fn load_quota_forecast_history(
         &self,
         _: &AccountUsageWindowQuery,
-    ) -> AdminStoreResult<gateway_admin::model::quota_forecast_sampling::QuotaForecastHistory> {
+    ) -> AdminStoreResult<gateway_admin::model::quota_forecast::QuotaForecastHistory> {
         Err(unavailable("quota forecast history"))
     }
 
@@ -1734,6 +1735,17 @@ impl UnusedProvider {
 
 #[async_trait]
 impl ProviderAdmin for UnusedProvider {
+    fn account_capabilities(
+        &self,
+        _: &ProviderAccountId,
+        _: &str,
+    ) -> gateway_admin::model::accounts::ProviderAccountCapabilities {
+        gateway_admin::model::accounts::ProviderAccountCapabilities {
+            credential_export: true,
+            ..Default::default()
+        }
+    }
+
     fn is_direct_account(&self, authentication_kind: &str) -> bool {
         authentication_kind == "oauth"
     }

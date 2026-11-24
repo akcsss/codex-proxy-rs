@@ -3,9 +3,9 @@ import type { AccountGroupRef, AccountModelAccess } from '@/api'
 
 import { ZFormItem, ZInput, ZSwitch, ZTextarea } from '@codex-proxy/ui'
 import { useI18n } from 'vue-i18n'
-import AccountModelAccessField from '@/components/account/model-access/index.vue'
+import AccountModelAccessField from '@/components/account-model-access-field/index.vue'
 import AccountGroupCheckboxGrid from '@/components/AccountGroupCheckboxGrid.vue'
-import AccountProxyField from './AccountProxyField.vue'
+import AccountProxyField from './account-proxy-field/index.vue'
 
 withDefaults(defineProps<{
   groups: AccountGroupRef[]

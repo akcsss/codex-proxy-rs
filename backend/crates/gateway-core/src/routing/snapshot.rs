@@ -1412,7 +1412,7 @@ impl RuntimeSnapshot {
         operation: &Operation,
         account_scope: Arc<FrozenAccountScope>,
         context: &RoutingContext,
-        enforce_account_model_policy: bool,
+        enforce_routing_policy: bool,
         direct_model: Option<&UpstreamModelId>,
     ) -> Result<RoutingPlan, RoutingError> {
         let requirements = operation.capability_requirements();
@@ -1440,8 +1440,7 @@ impl RuntimeSnapshot {
             }
             .map_err(|_| RoutingError::InvalidIdentifier)?
         };
-        if enforce_account_model_policy
-            && account_scope.groups_deny_model(Some(upstream_model.as_str()))
+        if enforce_routing_policy && account_scope.groups_deny_model(Some(upstream_model.as_str()))
         {
             return Err(RoutingError::GroupModelDenied);
         }
@@ -1476,7 +1475,7 @@ impl RuntimeSnapshot {
                 continue;
             }
             // 强制 Provider 路由也不能扩大 Key 授权；管理诊断的目标账号由探测入口固定
-            if enforce_account_model_policy
+            if enforce_routing_policy
                 && !account_scope.allows_provider_model(provider, upstream_model.as_str())
             {
                 continue;
@@ -1485,6 +1484,13 @@ impl RuntimeSnapshot {
                 .provider_models
                 .get(provider)
                 .and_then(|models| models.get(&upstream_model));
+            // 原生入口不能借同名模型、发现型目录的匿名透传或插件声明跨协议分派
+            if matches!(operation, Operation::Generate(request) if request.requires_native_protocol())
+                && capabilities.and_then(|model| model.generation_protocol)
+                    != Some(operation.protocol())
+            {
+                continue;
+            }
             // 直连模型需要原生能力，不能借用插件为同名模型声明的账号与能力。
             if direct_model.is_some() && capabilities.is_none() {
                 continue;
@@ -1502,24 +1508,30 @@ impl RuntimeSnapshot {
             let emulated_features = if contributions.is_empty() {
                 match capabilities {
                     Some(capabilities) => {
-                        let Some(emulated) = capabilities.match_requirements(&requirements) else {
+                        let Some(emulated) = capabilities.match_operation(operation, &requirements)
+                        else {
                             continue;
                         };
                         emulated
                     }
-                    None if known_model || self.exhaustive_provider_catalogs.contains(provider) => {
+                    // 固定账号诊断由指定 Provider 向上游核实，停用账号可能从未出现在公开目录
+                    None if enforce_routing_policy
+                        && (known_model
+                            || self.exhaustive_provider_catalogs.contains(provider)) =>
+                    {
                         continue;
                     }
                     None => BTreeSet::new(),
                 }
             } else {
-                let native = capabilities.and_then(|value| value.match_requirements(&requirements));
+                let native =
+                    capabilities.and_then(|value| value.match_operation(operation, &requirements));
                 let capable_accounts: BTreeSet<_> = contributions
                     .iter()
                     .filter(|model| {
                         model
                             .capabilities
-                            .match_requirements(&requirements)
+                            .match_operation(operation, &requirements)
                             .is_some()
                     })
                     .flat_map(|model| model.accounts.iter())
@@ -1660,7 +1672,7 @@ impl RuntimeSnapshot {
                 .and_then(|models| models.get(model))
             {
                 Some(capabilities) => capabilities
-                    .match_requirements(&operation.capability_requirements())
+                    .match_operation(operation, &operation.capability_requirements())
                     .is_some(),
                 None => !self.exhaustive_provider_catalogs.contains(provider),
             }

@@ -3501,6 +3501,44 @@ fn diagnostic_probe_uses_global_profile_without_data_plane_account_model_policy(
 }
 
 #[test]
+fn fixed_account_probe_reaches_the_provider_for_a_model_absent_from_its_public_catalog() {
+    use gateway_core::error::RoutingError;
+
+    let provider = ProviderKind::new("openai").unwrap();
+    let account = ProviderAccountId::new("acct_probe").unwrap();
+    let model = "unlisted-probe-model";
+    let snapshot = probe_snapshot();
+    let ordinary = snapshot.plan(
+        &PublicModelId::new(model).unwrap(),
+        &probe_operation(),
+        account_scope(&provider, account.as_str()),
+        &Default::default(),
+    );
+    assert!(matches!(ordinary, Err(RoutingError::ModelNotFound { .. })));
+
+    let service = DefaultExecutionService::new(
+        RuntimeSnapshotHandle::new(snapshot),
+        Arc::new(TrackingExecutionStore::default()),
+        ProviderRegistry::new([Arc::new(LocalFailingProvider) as Arc<dyn Provider>]).unwrap(),
+        Arc::new(UnusedAdmissions),
+        Arc::new(UnusedContinuation),
+        Arc::new(RecordingClientApiKeyUsage::default()),
+        Arc::new(crate::RecordingDiagnostics::default()),
+    );
+    let error = block_on(service.probe(
+        AccountProbeRequest {
+            target: AccountProbeTarget::ConnectionTest(account),
+            provider_kind: provider,
+            upstream_model: UpstreamModelId::new(model).unwrap(),
+            operation: probe_operation(),
+        },
+        None,
+    ))
+    .expect_err("the fixed provider reports its own connection failure");
+    assert_eq!(error.source(), AccountProbeErrorSource::Provider);
+}
+
+#[test]
 fn probe_observation_store_failure_preserves_the_provider_error() {
     let store = Arc::new(TrackingExecutionStore {
         fail_probe_observation: AtomicBool::new(true),

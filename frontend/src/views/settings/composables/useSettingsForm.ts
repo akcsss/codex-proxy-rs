@@ -1,18 +1,18 @@
-import type { ProtectionDraft } from '../components/error-protection/form'
+import type { ProtectionDraft } from '../components/error-protection/policy'
 import type { rotationOptions } from '../constants'
-import type { AccountAffinity, CodexPrivacyPolicy, OpenAiRequestCountry, ResetWindowWeights, SmartSchedulingConfig } from '@/api'
-import type { ProviderRequestProfiles, ProviderRequestProfileUpdates } from '@/api/modules/settings/profiles'
+import type { AccountAffinity, CodexPrivacyPolicy, OpenAiRequestCountry, ProviderRequestProfiles, ResetWindowWeights, SmartSchedulingConfig } from '@/api'
 import { cloneDeep, isEqual } from 'es-toolkit'
 import { computed, reactive, ref, shallowRef } from 'vue'
 import { detectRequestLocation, getSettings, updateSettings } from '@/api'
 
 import { ApiError } from '@/api/request'
+import { requestProfileChanges } from '@/components/request-profile/changes'
 import { useAsyncAction } from '@/composables/useAsyncAction'
 import { t } from '@/i18n'
+import { notification as ZNotification } from '@/plugins/notification'
 import { normalizeRequestLocation } from '@/utils/location'
-import { notification as ZNotification } from '@/utils/notification'
 import { errorMessage } from '@/utils/operation'
-import { trimProtectionText } from '../components/error-protection/form'
+import { trimProtectionText } from '../components/error-protection/policy'
 
 type RotationStrategy = (typeof rotationOptions.value)[number]['value']
 
@@ -265,7 +265,7 @@ export function useSettingsForm() {
     await saveAction.run(async () => {
       const result = await updateSettings({
         configRevision: savedSettings.form.configRevision,
-        providerRequestProfiles: requestProfileUpdates(
+        providerRequestProfiles: requestProfileChanges(
           savedSettings.form.providerRequestProfiles,
           form.providerRequestProfiles,
         ),
@@ -367,21 +367,4 @@ export function useSettingsForm() {
     saveSettings,
     loadSettings,
   }
-}
-
-function requestProfileUpdates(
-  previous: ProviderRequestProfiles,
-  current: ProviderRequestProfiles,
-): ProviderRequestProfileUpdates {
-  const updates: ProviderRequestProfileUpdates = {}
-  const clonedCurrent = cloneDeep(current)
-  for (const provider of new Set([
-    ...Object.keys(previous),
-    ...Object.keys(current),
-  ])) {
-    if (isEqual(previous[provider], current[provider]))
-      continue
-    updates[provider] = clonedCurrent[provider] ?? null
-  }
-  return updates
 }
