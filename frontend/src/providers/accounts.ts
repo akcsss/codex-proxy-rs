@@ -18,6 +18,7 @@ export interface AccountConnectionForm {
 
 interface ProviderAccounts {
   modes: readonly AccountImportMode[]
+  imageModelPresets?: readonly string[]
   callback: () => { callbackLabel: string, callbackPlaceholder: string, description: string }
   apiKeyImportForm?: Component
   connectionEditor?: Component & (new () => AccountConnectionForm)
@@ -41,6 +42,8 @@ const providers: Record<BuiltinProvider, ProviderAccounts> = {
     }),
     apiKeyImportForm: OpenAiApiKeyImportForm,
     connectionEditor: OpenAiAccountConnectionEditor,
+    // Codex 原生生图使用 gpt-image-2，另保留 gpt-image-1.5 供客户端显式选择
+    imageModelPresets: ['gpt-image-2', 'gpt-image-1.5'],
     tokenDocuments,
     splitDocument,
   },

@@ -1,12 +1,12 @@
 import type { UsageListRecord, UsageRecordDetail, UsageTokenDetails } from '@/api'
 import { t } from '@/i18n'
-import { formatCompactNumber, formatDuration, formatInteger } from '@/utils/format'
+import { formatCompactNumber, formatDuration, formatInteger, numberLocale } from '@/utils/format'
 
 // 列表与详情使用独立读模型，展示函数只依赖两者的公共字段。
 type UsageCommonRecord = UsageListRecord | UsageRecordDetail
 type UsageLatencyRecord = Pick<UsageCommonRecord, 'latencyDetails' | 'firstTokenLatencyMs' | 'latencyMs'>
 
-export type UsagePerformanceRecord = Pick<UsageCommonRecord, 'latencyDetails' | 'firstTokenLatencyMs'> & {
+export type UsagePerformanceRecord = Pick<UsageCommonRecord, 'latencyDetails' | 'firstTokenLatencyMs' | 'latencyMs'> & {
   tokenDetails: Pick<UsageListRecord['tokenDetails'], 'outputTokens'> | null
 }
 
@@ -100,17 +100,23 @@ export function usageModelDisplay(record: UsageModelRecord) {
 
 export function usagePerformanceDetails(record: UsagePerformanceRecord) {
   const upstreamMs = upstreamResponseMs(record.latencyDetails)
+  const responseMs = upstreamMs ?? durationValue(record.latencyMs)
   const outputTokens = record.tokenDetails?.outputTokens
-  // 输出已包含推理 Token，分母只取同一完成响应的官方时间跨度
-  const throughput = typeof outputTokens === 'number' && Number.isFinite(outputTokens) && outputTokens > 0
-    && upstreamMs !== null
-    ? outputTokens * 1000 / upstreamMs
-    : null
+  // 输出已包含推理 Token；本地耗时仅用于展示估算，不补写上游计时
+  let throughputDisplay = '—'
+  if (typeof outputTokens === 'number' && Number.isFinite(outputTokens) && outputTokens > 0
+    && responseMs !== null && responseMs > 0) {
+    const throughput = outputTokens * 1000 / responseMs
+    const value = throughput < 1000
+      ? new Intl.NumberFormat(numberLocale(), { maximumSignificantDigits: 3 }).format(throughput)
+      : formatCompactNumber(throughput)
+    throughputDisplay = `${upstreamMs === null
+      ? '≈ '
+      : ''}${value} tok/s`
+  }
 
   return {
-    throughputDisplay: throughput === null
-      ? '—'
-      : `${formatCompactNumber(throughput)} tok/s`,
+    throughputDisplay,
     firstTokenDisplay: formatDuration(durationValue(record.firstTokenLatencyMs)),
   }
 }

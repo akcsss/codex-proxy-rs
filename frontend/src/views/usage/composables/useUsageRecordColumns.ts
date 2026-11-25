@@ -11,7 +11,7 @@ type ColumnLayout = Record<string, Pick<TableColumn, 'width' | 'fixedWidth' | 'h
 
 const requestLayout: ColumnLayout = {
   clientApiKeyName: { fixedWidth: true },
-  accountEmail: { width: 280, hideable: true },
+  accountEmail: { hideable: true },
   model: { fixedWidth: true },
   reasoningEffort: { fixedWidth: true },
 }

@@ -173,6 +173,7 @@ const {
   modelAccess: batchModelAccess,
   editedFields: batchEditedFields,
   catalogAccountId: batchCatalogAccountId,
+  provider: batchProvider,
   editingCount: batchEditingCount,
   proxyMode: batchProxyMode,
   proxyId: batchProxyId,
@@ -463,6 +464,7 @@ const {
       v-model:proxy-id="batchProxyId"
       v-model:selected-group-ids="batchGroupIds"
       :catalog-account-id="batchCatalogAccountId"
+      :provider="batchProvider"
       :edited-fields="batchEditedFields"
       :selected-count="batchEditingCount"
       :groups="groups"

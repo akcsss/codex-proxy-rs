@@ -86,7 +86,7 @@ export const usageRecordColumns = computed(() => (defineTableColumns<UsageListRe
     hideable: false,
     label: t('accounts.account'),
     kind: 'identity',
-    size: '3xl',
+    size: '2xl',
   },
   {
     key: 'accountPlanType',

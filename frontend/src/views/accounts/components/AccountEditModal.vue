@@ -105,6 +105,7 @@ async function requestSave() {
         :current-proxy-id="account.outboundProxyId"
         :endpoint="account.outboundProxyEndpoint"
         :account-id="account.id"
+        :provider="account.provider"
       >
         <template #connection>
           <component

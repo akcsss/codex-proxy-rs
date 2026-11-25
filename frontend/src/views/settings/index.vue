@@ -271,7 +271,7 @@ watch(() => !loading.value && route.hash === '#reset-credits', async (ready) => 
                 :provider="providerId"
                 :active="section === 'upstream' && provider === providerId"
                 :disabled="disabled"
-                :class="{ 'col-span-full': providerId === 'openai' }"
+                class="col-span-full"
               />
               <template v-if="providerId === 'openai'">
                 <RequestLocationCard

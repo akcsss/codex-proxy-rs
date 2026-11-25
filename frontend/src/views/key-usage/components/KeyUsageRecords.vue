@@ -11,6 +11,7 @@ import UsageClientIpCell from '@/components/usage-records-table/UsageClientIpCel
 import UsageLatencyCell from '@/components/usage-records-table/UsageLatencyCell.vue'
 import UsageModelCell from '@/components/usage-records-table/UsageModelCell.vue'
 import UsagePerformanceCell from '@/components/usage-records-table/UsagePerformanceCell.vue'
+import UsagePerformanceHeader from '@/components/usage-records-table/UsagePerformanceHeader.vue'
 import UsageReasoningEffortCell from '@/components/usage-records-table/UsageReasoningEffortCell.vue'
 import UsageRouteCell from '@/components/usage-records-table/UsageRouteCell.vue'
 import UsageTimeCell from '@/components/usage-records-table/UsageTimeCell.vue'
@@ -60,6 +61,9 @@ const { visibleColumns, columnOptions, setColumnVisible, setColumnOrder, resetCo
         </template>
         <template #latency="{ row }">
           <UsageLatencyCell :record="row" />
+        </template>
+        <template #header-performance>
+          <UsagePerformanceHeader />
         </template>
         <template #performance="{ row }">
           <UsagePerformanceCell :record="row" />

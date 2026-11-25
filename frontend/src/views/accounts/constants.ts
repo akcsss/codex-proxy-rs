@@ -33,7 +33,7 @@ export const accountColumns = computed(() => (defineTableColumns<Account>([
     hideable: false,
     label: t('accounts.account'),
     kind: 'identity',
-    size: '3xl',
+    size: '2xl',
     sortable: 'email',
   },
   {

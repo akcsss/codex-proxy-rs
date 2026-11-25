@@ -17,6 +17,7 @@ import UsageErrorCell from './UsageErrorCell.vue'
 import UsageLatencyCell from './UsageLatencyCell.vue'
 import UsageModelCell from './UsageModelCell.vue'
 import UsagePerformanceCell from './UsagePerformanceCell.vue'
+import UsagePerformanceHeader from './UsagePerformanceHeader.vue'
 import UsageReasoningEffortCell from './UsageReasoningEffortCell.vue'
 import UsageRouteCell from './UsageRouteCell.vue'
 import UsageTimeCell from './UsageTimeCell.vue'
@@ -139,6 +140,10 @@ const { t } = useI18n({ useScope: 'global' })
 
     <template #latency="{ row }">
       <UsageLatencyCell :record="row" />
+    </template>
+
+    <template #header-performance>
+      <UsagePerformanceHeader />
     </template>
 
     <template #performance="{ row }">

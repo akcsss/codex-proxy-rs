@@ -4,6 +4,7 @@ import type { ProfileEditorProps } from '@/components/request-profile/useProfile
 import { ZButton, ZFormItem, ZInput, ZSelect, ZTextarea } from '@codex-proxy/ui'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import HelpPopover from '@/components/HelpPopover.vue'
 import ProfileEditorFrame from '@/components/request-profile/ProfileEditorFrame.vue'
 import { useProfileEditor } from '@/components/request-profile/useProfileEditor'
 
@@ -107,6 +108,12 @@ function updateSystemPrompt(value: string | null) {
       </ZFormItem>
     </div>
     <ZFormItem :label="t('settings.clientProfile.systemPrompt')">
+      <template #label-extra>
+        <HelpPopover
+          :label="t('settings.clientProfile.systemPrompt')"
+          :content="t('settings.clientProfile.systemPromptHint', { source: options?.systemPromptSource ?? '' })"
+        />
+      </template>
       <div class="grid gap-2">
         <ZTextarea
           v-model="systemPrompt"
@@ -115,12 +122,9 @@ function updateSystemPrompt(value: string | null) {
           :rows="5"
           resize="vertical"
         />
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <span class="text-z-sm text-z-text-secondary">{{ t('settings.clientProfile.systemPromptHint', { source: options?.systemPromptSource ?? '' }) }}</span>
-          <ZButton variant="link" size="small" :disabled="disabled || loading || effective?.systemPrompt == null" @click="updateSystemPrompt(null)">
-            {{ t('settings.clientProfile.restoreSystemPrompt') }}
-          </ZButton>
-        </div>
+        <ZButton variant="link" size="small" class="justify-self-end" :disabled="disabled || loading || effective?.systemPrompt == null" @click="updateSystemPrompt(null)">
+          {{ t('settings.clientProfile.restoreSystemPrompt') }}
+        </ZButton>
       </div>
     </ZFormItem>
   </ProfileEditorFrame>

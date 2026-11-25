@@ -32,7 +32,7 @@ const providerOptions = computed(() => {
 const activeProvider = computed({
   get: () => providerOptions.value.some(option => option.value === selectedProvider.value)
     ? selectedProvider.value
-    : props.profiles[0]?.provider ?? providerOptions.value[0]?.value ?? '',
+    : providerOptions.value[0]?.value ?? '',
   set: (value: string) => { selectedProvider.value = value },
 })
 

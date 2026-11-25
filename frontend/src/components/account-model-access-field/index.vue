@@ -17,8 +17,13 @@ const props = withDefaults(defineProps<{
   groupId?: string | null
   disabled?: boolean
   allowPreserve?: boolean
+  imageModelPresets?: readonly string[]
   formProp: string
-}>(), { disabled: false, allowPreserve: false })
+}>(), {
+  disabled: false,
+  allowPreserve: false,
+  imageModelPresets: () => [],
+})
 
 const { t } = useI18n({ useScope: 'global' })
 
@@ -80,13 +85,7 @@ const mode = computed({
 })
 const restricted = computed(() => mode.value === 'allowlist' || mode.value === 'denylist')
 const selectedIds = computed(() => new Set(model.value?.models))
-// Codex 原生生图使用 gpt-image-2，另保留 gpt-image-1.5 供客户端显式选择
-const commonImageModels = [
-  'gpt-image-2',
-  'gpt-image-1.5',
-]
-
-const allImageModelsSelected = computed(() => commonImageModels.every(id => selectedIds.value.has(id)))
+const allImageModelsSelected = computed(() => props.imageModelPresets.every(id => selectedIds.value.has(id)))
 // 候选项保留到本次编辑结束，取消勾选只修改待保存的模型限制。
 const availableIds = ref<string[]>([])
 const catalogReady = computed(() => catalog.value !== undefined && !loading.value && !error.value)
@@ -149,7 +148,7 @@ function restoreCleanupFocus() {
     refreshButton.value?.focus()
 }
 
-function select(modelIds: string[], selected: boolean) {
+function select(modelIds: readonly string[], selected: boolean) {
   if (props.disabled || !model.value || !restricted.value)
     return
   const ids = new Set(selectedIds.value)
@@ -169,7 +168,7 @@ function select(modelIds: string[], selected: boolean) {
     model.value = next
 }
 
-function addModels(ids: string[]) {
+function addModels(ids: readonly string[]) {
   select(ids, true)
   if (!selectionError.value) {
     search.value = ''
@@ -315,12 +314,12 @@ watch(search, () => {
           {{ t('accounts.modelAccess.addModel') }}
         </ZButton>
         <ZIconButton
-          v-if="mode === 'allowlist'"
+          v-if="mode === 'allowlist' && imageModelPresets.length"
           variant="plain"
           :aria-label="t('accounts.modelAccess.addImageModels')"
           :title="t('accounts.modelAccess.addImageModels')"
           :disabled="disabled || allImageModelsSelected"
-          @click="addModels(commonImageModels)"
+          @click="addModels(imageModelPresets)"
         >
           <ImagePlus aria-hidden="true" />
         </ZIconButton>
