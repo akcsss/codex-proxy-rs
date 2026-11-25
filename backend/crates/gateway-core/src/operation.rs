@@ -707,12 +707,28 @@ impl fmt::Debug for StandaloneSearchRequest {
 #[derive(Clone, PartialEq, Eq)]
 pub struct TokenCountRequest {
     payload: RawJsonPayload,
+    requires_native_protocol: bool,
 }
 
 impl TokenCountRequest {
     #[must_use]
     pub const fn from_raw_json(payload: RawJsonPayload) -> Self {
-        Self { payload }
+        Self {
+            payload,
+            requires_native_protocol: false,
+        }
+    }
+
+    /// 原生计数入口只接受目录明确声明的同协议模型
+    #[must_use]
+    pub const fn requiring_native_protocol(mut self) -> Self {
+        self.requires_native_protocol = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn requires_native_protocol(&self) -> bool {
+        self.requires_native_protocol
     }
 
     #[must_use]
@@ -1092,6 +1108,7 @@ impl Operation {
             Self::CountTokens(request) => {
                 let payload = request.payload;
                 Ok(Self::CountTokens(TokenCountRequest {
+                    requires_native_protocol: request.requires_native_protocol,
                     payload: RawJsonPayload {
                         protocol: target_protocol.unwrap_or(payload.protocol),
                         body: body.unwrap_or(payload.body),

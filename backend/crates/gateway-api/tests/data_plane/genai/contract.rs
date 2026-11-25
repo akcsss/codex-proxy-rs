@@ -172,3 +172,66 @@ async fn unknown_paths_and_methods_return_google_rpc_errors() {
         assert_eq!(payload["error"]["status"], rpc_status);
     }
 }
+
+#[tokio::test]
+async fn count_preserves_native_wire_and_uses_url_model_without_streaming() {
+    let raw = Bytes::from_static(br#"{ "totalTokens":42,"cachedContentTokenCount":7 }"#);
+    let execution = Arc::new(Execution {
+        session: Mutex::new(Some(Session::new(vec![ProviderEvent::wire(
+            ProtocolWireEvent::raw_json(GENAI_PROTOCOL, raw.clone()).unwrap(),
+        )]))),
+        ..Default::default()
+    });
+    let response = api_router(execution.clone())
+        .await
+        .oneshot(request(&format!("{SHORT}:countTokens")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(to_bytes(response.into_body(), 2048).await.unwrap(), raw);
+    let seen = execution.seen.lock().unwrap().take().unwrap();
+    assert_eq!(seen.public_model.as_str(), "model-a");
+    assert!(!seen.metadata.stream);
+    let Operation::CountTokens(count) = seen.operation else {
+        panic!("expected token count")
+    };
+    assert!(count.requires_native_protocol());
+    assert_eq!(count.payload().body().as_ref(), BODY.as_bytes());
+}
+
+#[tokio::test]
+async fn invalid_count_result_is_not_a_successful_response() {
+    for raw in [
+        br#"{}"#.as_slice(),
+        br#"{"totalTokens":-1}"#,
+        br#"{"totalTokens":"42"}"#,
+    ] {
+        let execution = Arc::new(Execution {
+            session: Mutex::new(Some(Session::new(vec![ProviderEvent::wire(
+                ProtocolWireEvent::raw_json(GENAI_PROTOCOL, Bytes::copy_from_slice(raw)).unwrap(),
+            )]))),
+            ..Default::default()
+        });
+        let response = api_router(execution)
+            .await
+            .oneshot(request(&format!("{SHORT}:countTokens")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 2048).await.unwrap()).unwrap();
+        assert_eq!(body["error"]["code"], 500);
+    }
+}
+
+#[tokio::test]
+async fn count_rejects_sse_before_execution() {
+    let execution = Arc::new(Execution::default());
+    let response = api_router(execution.clone())
+        .await
+        .oneshot(request(&format!("{SHORT}:countTokens?alt=sse")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(execution.seen.lock().unwrap().is_none());
+}

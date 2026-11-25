@@ -979,3 +979,63 @@ fn generation_routes_only_to_models_that_accept_the_wire_and_the_key() {
         );
     }
 }
+
+#[test]
+fn native_count_catalog_and_execution_do_not_fall_back_to_another_protocol() {
+    let caps = ModelCapabilities::new(
+        BTreeSet::from([OperationKind::Generate, OperationKind::CountTokens]),
+        None,
+    );
+    let snapshot = RuntimeSnapshot::new(
+        ConfigRevision::new(1).unwrap(),
+        settings(),
+        vec![
+            ProviderKind::new("openai").unwrap(),
+            ProviderKind::new("xai").unwrap(),
+        ],
+        vec![
+            model("openai", "shared", caps.clone()),
+            model("xai", "shared", caps.with_generation_protocol("genai")),
+        ],
+        vec![],
+    )
+    .unwrap()
+    .with_account_directory(account_directory());
+    let original = Operation::CountTokens(
+        TokenCountRequest::from_raw_json(
+            RawJsonPayload::new("genai", Bytes::from_static(b"{}")).unwrap(),
+        )
+        .requiring_native_protocol(),
+    );
+    let operation = original
+        .replace_protocol_wire(
+            Some(Bytes::from_static(b"{\"contents\":[]}")),
+            Default::default(),
+        )
+        .unwrap();
+    assert!(matches!(&operation,Operation::CountTokens(count) if count.requires_native_protocol()));
+    let public = PublicModelId::new("shared").unwrap();
+    let plan = snapshot
+        .plan(
+            &public,
+            &operation,
+            account_scope(),
+            &RoutingContext::default(),
+        )
+        .unwrap();
+    assert_eq!(plan.candidates().len(), 1);
+    assert_eq!(plan.candidates()[0].provider().as_str(), "xai");
+    assert_eq!(
+        snapshot.public_models_for_operation(&account_scope(), &operation),
+        vec![public]
+    );
+    let restricted = Arc::new(account_scope().restricted_to(
+        &[ProviderKind::new("openai").unwrap()].into(),
+        &Default::default(),
+    ));
+    assert!(
+        snapshot
+            .public_models_for_operation(&restricted, &operation)
+            .is_empty()
+    );
+}

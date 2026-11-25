@@ -122,11 +122,7 @@ impl CloudCodeClient {
             model: &'a str,
             request: BTreeMap<String, &'a RawValue>,
         }
-        let mut request: BTreeMap<String, &RawValue> = serde_json::from_slice(body)
-            .map_err(|e| unsent(Kind::InvalidRequest).with_source(e))?;
-        // 身份策略在 AGY 出站边界统一执行，其他原生字段保留原始 JSON 表达
-        request.remove("system_instruction");
-        request.insert("systemInstruction".to_owned(), &self.system_instruction);
+        let request = self.request_body(body)?;
         let (send, media) = if stream {
             (
                 self.post("streamGenerateContent", token)
@@ -136,7 +132,68 @@ impl CloudCodeClient {
         } else {
             (self.post("generateContent", token), "application/json")
         };
-        let mut send = send;
+        self.send(
+            send.json(&Envelope {
+                project,
+                model,
+                request,
+            }),
+            token,
+            headers,
+            media,
+        )
+        .await
+    }
+
+    pub(crate) async fn count_tokens(
+        &self,
+        token: &str,
+        body: &[u8],
+        headers: &[MiddlewareHeader],
+    ) -> Result<Response, ProviderError> {
+        let mut request = self.request_body(body)?;
+        // Desktop 的计数封套只接受 Vertex CountTokensRequest，没有项目和生成控制字段
+        for field in [
+            "model",
+            "safetySettings",
+            "safety_settings",
+            "toolConfig",
+            "tool_config",
+            "labels",
+            "sessionId",
+            "session_id",
+        ] {
+            request.remove(field);
+        }
+        self.send(
+            self.post("countTokens", token)
+                .json(&json!({"request":request})),
+            token,
+            headers,
+            "application/json",
+        )
+        .await
+    }
+
+    fn request_body<'a>(
+        &'a self,
+        body: &'a [u8],
+    ) -> Result<BTreeMap<String, &'a RawValue>, ProviderError> {
+        let mut request: BTreeMap<String, &RawValue> = serde_json::from_slice(body)
+            .map_err(|e| unsent(Kind::InvalidRequest).with_source(e))?;
+        // 生成和计数共享同一身份策略，其他字段保留原始 JSON 表达
+        request.remove("system_instruction");
+        request.insert("systemInstruction".to_owned(), &self.system_instruction);
+        Ok(request)
+    }
+
+    async fn send(
+        &self,
+        mut send: reqwest::RequestBuilder,
+        token: &str,
+        headers: &[MiddlewareHeader],
+        media: &str,
+    ) -> Result<Response, ProviderError> {
         for header in headers {
             if protected_header(header.name()) {
                 continue;
@@ -147,15 +204,7 @@ impl CloudCodeClient {
                 .map_err(|e| unsent(Kind::InvalidRequest).with_source(e))?;
             send = send.header(name, value);
         }
-        let response = send
-            .json(&Envelope {
-                project,
-                model,
-                request,
-            })
-            .send()
-            .await
-            .map_err(network)?;
+        let response = send.send().await.map_err(network)?;
         let response = successful(super::response::decode(response), token).await?;
         if !response
             .headers()

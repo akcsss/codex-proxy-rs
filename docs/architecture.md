@@ -574,6 +574,8 @@ Antigravity 的 `credential/catalog` 持有与凭据版本绑定的项目与模�
 
 数据面协议入口位于 `gateway-api/src/data_plane`。Responses、Chat Completions、Messages 与 GenAI 共用 `generation` 的执行和交付流程。GenAI 从 URL 解码模型和生成方法，要求候选模型在原生目录中声明对应协议。Core 在 Key 的账号范围内匹配能力，Antigravity 将选中的 GenAI 请求封装为 Cloud Code 上游请求
 
+GenAI 模型目录通过 Core 的原生操作路由判断过滤冻结账号范围；列表、详情和执行使用同一份能力事实。Antigravity 声明生成与输入计数能力，原生 GenAI 和 Messages 计数复用选号、画像、中间件及资源释放流程，出站调用独立的 Cloud Code `countTokens`。计数响应不产生生成用量或费用事实，失败不切换为本地估算
+
 Antigravity 目录分别声明原生 GenAI 协议和接受转换的 Responses／Messages 协议；原生能力约束仍只匹配原生协议。`gateway-protocol::genai` 持有纯内容与增量事件映射，Responses 复用已有 Messages 转换能力，Chat 复用 API 层的 Responses 入口。Provider 的 `provider/translation` 负责选择和装配转换器，`transport` 负责 Cloud Code 封装、原生 wire 与调用事实，并按冻结画像统一替换 AGY 系统指令。默认提示和可编辑配置归 Provider 的 `profile`，纯协议转换层不持有 AGY 身份规则
 
 Antigravity 的 Cloud Code 传输固定使用 rustls 与 HTTP/1.1，gzip 协商和流式解压由本 Provider 持有，不启用会影响其他 Provider 的 reqwest 全局压缩特性。解压后的流继续遵循控制面和推理消费方的大小限制、取消及截止时间

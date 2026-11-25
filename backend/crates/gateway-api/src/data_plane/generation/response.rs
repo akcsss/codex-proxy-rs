@@ -34,7 +34,9 @@ impl GenerationEncoder {
     pub(super) fn new(protocol: GenerationEndpoint) -> Self {
         match protocol {
             GenerationEndpoint::Responses => Self::Responses(OpenAiResponsesEncoder::new()),
-            GenerationEndpoint::GenAi => Self::GenAi { failed: false },
+            GenerationEndpoint::GenAi | GenerationEndpoint::GenAiTokenCount => {
+                Self::GenAi { failed: false }
+            }
             GenerationEndpoint::Messages | GenerationEndpoint::MessageTokenCount => {
                 Self::Messages {
                     response_id: None,
@@ -179,7 +181,7 @@ impl GenerationEndpoint {
     pub(super) const fn stream_error_encoder(self) -> Option<fn(&Value) -> Bytes> {
         match self {
             Self::Responses => None,
-            Self::GenAi => Some(crate::data_plane::genai::stream_error),
+            Self::GenAi | Self::GenAiTokenCount => Some(crate::data_plane::genai::stream_error),
             Self::Messages | Self::MessageTokenCount => Some(messages::stream_error),
         }
     }
@@ -190,7 +192,9 @@ impl GenerationEndpoint {
     ) -> axum::response::Response {
         match self {
             Self::Responses => response,
-            Self::GenAi => crate::data_plane::genai::project_error_response(response).await,
+            Self::GenAi | Self::GenAiTokenCount => {
+                crate::data_plane::genai::project_error_response(response).await
+            }
             Self::Messages | Self::MessageTokenCount => {
                 messages::project_error_response(response).await
             }
@@ -201,7 +205,9 @@ impl GenerationEndpoint {
         match self {
             Self::Responses => Bytes::from_static(DONE_SSE_FRAME.as_bytes()),
             // Messages 的 message_stop 已在 wire 中交付，空帧只确认宿主交付终结
-            Self::Messages | Self::MessageTokenCount | Self::GenAi => Bytes::new(),
+            Self::Messages | Self::MessageTokenCount | Self::GenAi | Self::GenAiTokenCount => {
+                Bytes::new()
+            }
         }
     }
 
@@ -212,7 +218,7 @@ impl GenerationEndpoint {
             )?)
             .map_err(|_| ResponseEncodeError::Serialization);
         }
-        if self == Self::GenAi {
+        if matches!(self, Self::GenAi | Self::GenAiTokenCount) {
             let mut wires = events
                 .iter()
                 .filter_map(ProviderEvent::wire_event)
@@ -224,7 +230,21 @@ impl GenerationEndpoint {
                 return Err(ResponseEncodeError::InvalidOutputItems);
             }
             if let Some(raw) = wire.raw_json_body() {
+                if self == Self::GenAiTokenCount {
+                    super::validation::GenerationValidationFacts::new(self)
+                        .validate_buffered(raw)
+                        .map_err(|_| ResponseEncodeError::InvalidOutputItems)?;
+                }
                 return Ok(raw.to_vec());
+            }
+            if self == Self::GenAiTokenCount
+                && wire
+                    .data()
+                    .get("totalTokens")
+                    .and_then(Value::as_u64)
+                    .is_none()
+            {
+                return Err(ResponseEncodeError::InvalidOutputItems);
             }
             return serde_json::to_vec(wire.data()).map_err(|_| ResponseEncodeError::Serialization);
         }

@@ -27,6 +27,7 @@ impl AntigravityProvider {
         if !matches!(
             request.operation().protocol(),
             GENAI_PROTOCOL
+                | "token-count"
                 | gateway_protocol::openai::OPENAI_PROTOCOL
                 | gateway_protocol::anthropic::ANTHROPIC_PROTOCOL
         ) {
@@ -84,15 +85,18 @@ impl AntigravityProvider {
             selected.account.id().clone(),
             Box::new(move |operation, headers| Box::pin(async move {
                 let (operation, translator) = super::translation::prepare(operation)?;
-                let Operation::Generate(generate) = &operation else {
-                    return Err(unsent(Kind::Unsupported));
-                };
-                let payload = generate.protocol_payload();
-                if payload.protocol() != GENAI_PROTOCOL {
+                if operation.protocol() != GENAI_PROTOCOL {
                     return Err(unsent(Kind::Unsupported));
                 }
-                let stream = payload.context().get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false);
-                let pricing = pricing.filter(|_| crate::billing::supports_pricing_fields(payload.body()));
+                let (counted, stream, pricing) = match &operation {
+                    Operation::Generate(generate) => {
+                        let payload = generate.protocol_payload();
+                        (false, payload.context().get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                            pricing.filter(|_| crate::billing::supports_pricing_fields(payload.body())))
+                    }
+                    Operation::CountTokens(_) => (true, false, None),
+                    _ => return Err(unsent(Kind::Unsupported)),
+                };
                 let body = operation.middleware_body().map_err(|_| unsent(Kind::InvalidRequest))?;
                 let events = async_stream::try_stream! {
                     if cancellation.is_cancelled() {
@@ -110,6 +114,9 @@ impl AntigravityProvider {
                         _ = deadline.wait() => Err(ProviderError::new(Kind::Timeout, UpstreamSendState::Ambiguous)),
                         response = async {
                             let token = &selected.material.access_token;
+                            if counted {
+                                return resource.count_tokens(token, &body, &headers).await;
+                            }
                             let project = match selected.project {
                                 Project::Catalog(project) => project,
                                 // 固定探测使用该账号实际授权的项目，包括尚无公开目录的停用账号
@@ -122,13 +129,15 @@ impl AntigravityProvider {
                         Ok(response) => response,
                         Err(error) => Err(record_failure(error).await)?,
                     };
-                    let events = crate::transport::events(
-                        response, crate::transport::ResponseContext {
+                    let context = crate::transport::ResponseContext {
                             stream, model: model.clone(), deadline, cancel: cancellation,
                             token: selected.material.access_token, pricing, started_at,
-                        },
-                    );
-                    futures::pin_mut!(events);
+                        };
+                    let mut events: gateway_core::engine::provider::EventStream = if counted {
+                        Box::pin(crate::transport::count_events(response, context))
+                    } else {
+                        Box::pin(crate::transport::events(response, context))
+                    };
                     while let Some(event) = events.next().await {
                         match event {
                             Ok(event) => yield event,

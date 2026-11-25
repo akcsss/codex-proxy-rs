@@ -254,9 +254,15 @@ Messages 与 Responses 的转换边界见 [Messages 请求](#messages-请求)，
 | --- | --- | --- |
 | POST | `/v1beta/models/{model}:generateContent` | 原生 JSON |
 | POST | `/v1beta/models/{model}:streamGenerateContent?alt=sse` | 原生 SSE，允许最后一个候选结束后继续接收用量帧 |
+| POST | `/v1beta/models/{model}:countTokens` | 上游输入计数 JSON，返回 `totalTokens` |
+| GET | `/v1beta/models`、`/v1beta/models/{model}` | Gemini 格式的模型列表与详情，见[模型目录](#模型目录) |
 | POST | `/v1beta:{method}`（客户端后台指标） | 验证 Key 后返回 `{}`，不启动模型请求 |
 
 普通生成从上游 JSON 的 `response` 中取出原生正文，流式生成逐个解开 SSE 数据帧。原生正文保留工具参数、结果、思考签名和未知字段。客户端归属读取 `User-Agent`、`X-Goog-Api-Client`。网关错误使用 Google RPC 风格的 `error.code`、`error.status` 和 `error.message`。[Google 原生生成协议](https://ai.google.dev/api/generate-content)
+
+`countTokens` 接受 `contents` 或完整的 `generateContentRequest`；后者存在时优先使用其内容。计数与生成使用相同的 AGY 系统提示词配置，调用 Cloud Code 的独立计数接口，不生成助手输出、不记为生成用量，也不在失败时回退到本地估算。该入口仅返回 JSON，不接受 `alt=sse`
+
+AGY 上游计数与生成响应的 `usageMetadata.promptTokenCount` 口径不完全一致：系统提示、工具定义及工具结果未完整计入计数返回值。原生与 Messages 计数均保留这一上游口径，不能作为完整上下文占用或计费用量的精确值
 
 Antigravity 模型也可通过 `/v1/responses`、`/v1/chat/completions` 和 `/v1/messages` 调用，均支持 JSON 与 SSE。转换入口支持文本、内嵌图片／文档、函数工具及结果、生成参数和 JSON Schema；未知内容块返回请求错误，模型自身不支持的参数由上游校验。原生入口不经过转换器；所有 AGY 入口在出站时使用同一份系统提示词配置，替换客户端系统指令，其余原生字段保持原始表达
 
@@ -435,6 +441,7 @@ Messages 费用按管理员显式配置的模型价格计算，未配置时保�
 | Messages，地址为官方 `https://api.anthropic.com`，HTTPS 端口为 443 | 请求上游 API 前缀下的 `messages/count_tokens`，返回原生计数结果 |
 | 自定义 Messages 上游 | 对 Messages 内容使用本地 tokenizer 估算 |
 | Responses 上游，包括 OAuth | 先投影为 Responses 内容，再使用本地 tokenizer 估算 |
+| Antigravity | 转换为 GenAI 输入并应用 AGY 系统提示词，调用 Cloud Code `countTokens`，将 `totalTokens` 投影为 `input_tokens` |
 
 本地估算按模型选择 tokenizer，计算可提取的文本、工具定义与工具内容，不包含图片、音频、视频、二进制文档及隐藏推理的模型专用成本。
 它不保证与上游账单或完整多模态上下文一致，也不发送上游生成请求或产生上游用量。
@@ -763,6 +770,10 @@ OpenAI 聚合当前 Key 范围内合格 OAuth 和 API Key 账号的目录。每�
 
 服务启动时批量恢复账号目录；目录读取只检查本地账号资格和 Client Key 范围，不等待上游查询。
 成功目录响应带 `Cache-Control: private, no-store`，不借用上游 ETag 标识经过选择/别名/聚合后的正文
+
+Gemini 客户端使用 `GET /v1beta/models` 和 `GET /v1beta/models/{model}`。目录只包含当前 Key 可通过原生 GenAI 入口路由的已知模型，沿用账号范围、模型限制和别名；不会将其他协议的同名模型作为原生候选。条目提供 `name: "models/{id}"`、`displayName` 与 `supportedGenerationMethods`，未知的版本、上下文和输出上限不补默认值
+
+Gemini 列表按模型 ID 排序，支持 `pageSize`（默认 50，上限 1000，0 使用默认值）和 `pageToken`；后续页保持相同的 `pageSize`，末页省略 `nextPageToken`。详情查不到模型返回 Google RPC 格式的 404；分页及详情均重新检查当前 Key 的可见范围，不发起上游模型请求
 
 `service_tiers` 中的 `name` 用于生成 `/fast` 等命令，`id` 用作请求的 `service_tier` 值。
 上游未声明档位或返回空数组时，网关不补充档位。档位更新后，客户端需重新加载模型目录

@@ -22,6 +22,7 @@ pub(crate) enum GenerationEndpoint {
     Messages,
     MessageTokenCount,
     GenAi,
+    GenAiTokenCount,
 }
 
 impl GenerationEndpoint {
@@ -36,7 +37,7 @@ impl GenerationEndpoint {
     pub(crate) const fn wire(self) -> &'static str {
         match self {
             Self::Responses => OPENAI_PROTOCOL,
-            Self::GenAi => gateway_protocol::genai::GENAI_PROTOCOL,
+            Self::GenAi | Self::GenAiTokenCount => gateway_protocol::genai::GENAI_PROTOCOL,
             Self::Messages | Self::MessageTokenCount => ANTHROPIC_PROTOCOL,
         }
     }
@@ -44,7 +45,7 @@ impl GenerationEndpoint {
     pub(crate) const fn path(self) -> &'static str {
         match self {
             Self::Responses => super::router::RESPONSES_PATH,
-            Self::GenAi => super::genai::MODEL_ACTION_PATH,
+            Self::GenAi | Self::GenAiTokenCount => super::genai::MODEL_ACTION_PATH,
             Self::Messages => super::router::MESSAGES_PATH,
             Self::MessageTokenCount => super::router::MESSAGE_TOKENS_PATH,
         }
@@ -53,7 +54,7 @@ impl GenerationEndpoint {
     pub(crate) const fn operation(self) -> OperationKind {
         match self {
             Self::Responses | Self::Messages | Self::GenAi => OperationKind::Generate,
-            Self::MessageTokenCount => OperationKind::CountTokens,
+            Self::MessageTokenCount | Self::GenAiTokenCount => OperationKind::CountTokens,
         }
     }
 }
@@ -73,9 +74,15 @@ impl GenerationInput {
     ) -> Result<DecodedGenerationRequest, gateway_core::engine::middleware::MiddlewareError> {
         use gateway_core::engine::middleware::MiddlewareError;
         match self.endpoint {
-            GenerationEndpoint::GenAi => {
-                super::genai::decode(&self.model, self.stream, body.clone(), headers)
-                    .map_err(MiddlewareError::Gateway)
+            GenerationEndpoint::GenAi | GenerationEndpoint::GenAiTokenCount => {
+                super::genai::decode(
+                    &self.model,
+                    self.stream,
+                    self.endpoint,
+                    body.clone(),
+                    headers,
+                )
+                .map_err(MiddlewareError::Gateway)
             }
             GenerationEndpoint::Responses => {
                 super::responses::decode_request_with_headers(body, headers, maximum)

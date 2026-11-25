@@ -14,5 +14,7 @@ pub const GENAI_PROTOCOL: &str = "genai";
 
 mod messages;
 mod stream;
+mod tokens;
 pub use messages::messages_to_genai_request;
 pub use stream::GenAiToMessagesStream;
+pub use tokens::{count_tokens_request, count_tokens_to_messages};

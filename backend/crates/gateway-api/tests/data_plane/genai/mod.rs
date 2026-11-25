@@ -1,6 +1,7 @@
 //! 核对 GenAI 原生路由、归属边界、原始字节及晚到用量的交付
 
 mod contract;
+mod models;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
 use axum::{
@@ -35,6 +36,7 @@ const BODY: &str = r#"{ "contents":[{"role":"user","parts":[{"text":"Read record
 
 #[derive(Default)]
 struct Execution {
+    client: Option<AuthenticatedClient>,
     session: Mutex<Option<Session>>,
     seen: Mutex<Option<PreparedExecutionRequest>>,
 }
@@ -42,7 +44,10 @@ struct Execution {
 impl ExecutionService for Execution {
     fn authenticate(&self, key: &str) -> Result<AuthenticatedClient, ClientAuthenticationError> {
         if key == KEY {
-            Ok(authenticated_client(key))
+            Ok(self
+                .client
+                .clone()
+                .unwrap_or_else(|| authenticated_client(key)))
         } else {
             Err(ClientAuthenticationError::InvalidKey)
         }
@@ -65,9 +70,11 @@ impl ExecutionService for Execution {
         request: PreparedExecutionRequest,
     ) -> BoxFuture<'_, Result<StartedExecution, GatewayError>> {
         Box::pin(async move {
-            assert!(
-                matches!(&request.operation, Operation::Generate(generate) if generate.requires_native_protocol())
-            );
+            assert!(match &request.operation {
+                Operation::Generate(generate) => generate.requires_native_protocol(),
+                Operation::CountTokens(count) => count.requires_native_protocol(),
+                _ => false,
+            });
             let stream = request.metadata.stream;
             *self.seen.lock().unwrap() = Some(request);
             Ok(StartedExecution {

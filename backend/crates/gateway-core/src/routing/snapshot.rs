@@ -1061,6 +1061,27 @@ impl RuntimeSnapshot {
             .collect()
     }
 
+    /// 协议目录复用执行路由的能力与范围判断，不公布当前入口无法调用的模型
+    #[must_use]
+    pub fn public_models_for_operation(
+        &self,
+        scope: &Arc<FrozenAccountScope>,
+        operation: &Operation,
+    ) -> Vec<PublicModelId> {
+        self.public_models_for_scope(scope)
+            .into_iter()
+            .filter(|model| {
+                self.plan(
+                    model,
+                    operation,
+                    Arc::clone(scope),
+                    &RoutingContext::default(),
+                )
+                .is_ok()
+            })
+            .collect()
+    }
+
     /// 合并冻结账号范围内实际存在 Provider 的公开模型画像
     #[must_use]
     pub fn public_model_profiles_for_scope(
@@ -1485,7 +1506,12 @@ impl RuntimeSnapshot {
                 .get(provider)
                 .and_then(|models| models.get(&upstream_model));
             // 原生入口不能借同名模型、发现型目录的匿名透传或插件声明跨协议分派
-            if matches!(operation, Operation::Generate(request) if request.requires_native_protocol())
+            let native_protocol = match operation {
+                Operation::Generate(request) => request.requires_native_protocol(),
+                Operation::CountTokens(request) => request.requires_native_protocol(),
+                _ => false,
+            };
+            if native_protocol
                 && capabilities.and_then(|model| model.generation_protocol)
                     != Some(operation.protocol())
             {

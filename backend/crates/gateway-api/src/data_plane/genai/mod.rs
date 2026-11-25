@@ -1,6 +1,7 @@
 //! Google GenAI 原生 HTTP 入口，模型和生成方法取自 URL，业务正文进入通用执行链路
 
 mod error;
+mod models;
 pub(super) use error::project_error_response;
 pub(in crate::data_plane) use error::{error_frame, stream_error};
 
@@ -12,11 +13,11 @@ use axum::{
     extract::{ConnectInfo, Extension, Path, RawQuery, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse as _, Response},
-    routing::post,
+    routing::{get, post},
 };
 use gateway_core::{
     error::{GatewayError, GatewayErrorKind},
-    operation::{GenerateRequest, Operation, ProtocolPayload},
+    operation::{GenerateRequest, Operation, ProtocolPayload, RawJsonPayload, TokenCountRequest},
 };
 use gateway_protocol::genai::GENAI_PROTOCOL;
 use serde_json::{Map, Value, json};
@@ -42,7 +43,8 @@ const METRICS_PATH: &str = "/v1beta:{method}";
 
 pub(super) fn router() -> Router<ApiState> {
     Router::new()
-        .route(MODEL_ACTION_PATH, post(generate))
+        .route(models::MODELS_PATH, get(models::list))
+        .route(MODEL_ACTION_PATH, post(generate).get(models::detail))
         .route(METRICS_PATH, post(metric))
         .layer(axum::middleware::map_response(project_error_response))
 }
@@ -55,9 +57,10 @@ fn parse_route(resource: &str, query: Option<&str>) -> Result<GenerationInput, G
     if !valid_segment(model) {
         return Err(invalid("Invalid model name."));
     }
-    let stream = match method {
-        "generateContent" => false,
-        "streamGenerateContent" => true,
+    let (endpoint, stream) = match method {
+        "generateContent" => (GenerationEndpoint::GenAi, false),
+        "streamGenerateContent" => (GenerationEndpoint::GenAi, true),
+        "countTokens" => (GenerationEndpoint::GenAiTokenCount, false),
         _ => {
             return Err(GatewayError::new(
                 GatewayErrorKind::ModelNotFound,
@@ -77,7 +80,7 @@ fn parse_route(resource: &str, query: Option<&str>) -> Result<GenerationInput, G
         ));
     }
     Ok(GenerationInput {
-        endpoint: GenerationEndpoint::GenAi,
+        endpoint,
         model: model.to_owned(),
         stream,
     })
@@ -86,6 +89,7 @@ fn parse_route(resource: &str, query: Option<&str>) -> Result<GenerationInput, G
 pub(super) fn decode(
     model: &str,
     stream: bool,
+    endpoint: GenerationEndpoint,
     body: Bytes,
     headers: &HeaderMap,
 ) -> Result<DecodedGenerationRequest, GatewayError> {
@@ -104,7 +108,7 @@ pub(super) fn decode(
         }
     }
     context.insert("headers".into(), Value::Object(attribution));
-    let payload = ProtocolPayload::from_json_bytes(GENAI_PROTOCOL, body)
+    let payload = ProtocolPayload::from_json_bytes(GENAI_PROTOCOL, body.clone())
         .map_err(|_| {
             GatewayError::new(
                 GatewayErrorKind::InvalidRequest,
@@ -112,10 +116,27 @@ pub(super) fn decode(
             )
         })?
         .with_context(context);
-    Ok(DecodedGenerationRequest {
-        operation: Operation::Generate(
+    let operation = if endpoint == GenerationEndpoint::GenAiTokenCount {
+        Operation::CountTokens(
+            TokenCountRequest::from_raw_json(
+                RawJsonPayload::new(GENAI_PROTOCOL, body)
+                    .map_err(|_| {
+                        GatewayError::new(
+                            GatewayErrorKind::InvalidRequest,
+                            "Invalid request protocol.",
+                        )
+                    })?
+                    .with_context(payload.context().clone()),
+            )
+            .requiring_native_protocol(),
+        )
+    } else {
+        Operation::Generate(
             GenerateRequest::from_protocol_payload(payload).requiring_native_protocol(),
-        ),
+        )
+    };
+    Ok(DecodedGenerationRequest {
+        operation,
         metadata: GenerationRequestMetadata {
             requested_model: model.to_owned(),
             stream,

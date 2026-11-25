@@ -16,7 +16,7 @@ use crate::data_plane::responses::validation::{
 pub(super) enum GenerationValidationFacts {
     Responses(ResponseValidationFacts),
     Messages(Arc<Mutex<Option<String>>>),
-    Count,
+    Count(&'static str),
     GenAi,
 }
 
@@ -25,7 +25,8 @@ impl GenerationValidationFacts {
         match protocol {
             GenerationEndpoint::Responses => Self::Responses(ResponseValidationFacts::default()),
             GenerationEndpoint::Messages => Self::Messages(Arc::default()),
-            GenerationEndpoint::MessageTokenCount => Self::Count,
+            GenerationEndpoint::MessageTokenCount => Self::Count("input_tokens"),
+            GenerationEndpoint::GenAiTokenCount => Self::Count("totalTokens"),
             GenerationEndpoint::GenAi => Self::GenAi,
         }
     }
@@ -47,7 +48,7 @@ impl GenerationValidationFacts {
                     *id = Some(value.to_owned());
                 }
             }
-            Self::Count | Self::GenAi => {}
+            Self::Count(_) | Self::GenAi => {}
         }
     }
 
@@ -72,7 +73,7 @@ impl GenerationValidationFacts {
         match self {
             Self::Responses(facts) => facts.response_id(),
             Self::Messages(id) => id.lock().ok().and_then(|id| id.clone()),
-            Self::Count | Self::GenAi => None,
+            Self::Count(_) | Self::GenAi => None,
         }
     }
 
@@ -102,9 +103,9 @@ impl GenerationValidationFacts {
                     Err(())
                 }
             }
-            Self::Count => serde_json::from_slice::<Value>(bytes)
+            Self::Count(field) => serde_json::from_slice::<Value>(bytes)
                 .ok()
-                .and_then(|value| value.get("input_tokens").and_then(Value::as_u64))
+                .and_then(|value| value.get(*field).and_then(Value::as_u64))
                 .map(|_| ())
                 .ok_or(()),
         }

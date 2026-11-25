@@ -233,6 +233,13 @@ pub(super) fn authenticated_client_for_provider_with_limit(
         .clone()
         .with_responses_max_decompressed_body_bytes(bytes as u64);
     let snapshot = snapshot.with_settings(&settings).unwrap();
+    authenticated_client_from_snapshot(plaintext, snapshot)
+}
+
+pub(super) fn authenticated_client_from_snapshot(
+    plaintext: &str,
+    snapshot: RuntimeSnapshot,
+) -> AuthenticatedClient {
     let source = DefaultExecutionService::new(
         RuntimeSnapshotHandle::new(snapshot),
         Arc::new(UnusedExecutionStore),

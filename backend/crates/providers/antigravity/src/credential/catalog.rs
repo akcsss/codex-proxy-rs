@@ -182,13 +182,16 @@ impl CatalogService {
             .map(|(model, accounts)| {
                 ProviderModelCapabilities::new(
                     model,
-                    ModelCapabilities::new([OperationKind::Generate].into(), None)
-                        .with_generation_protocol(gateway_protocol::genai::GENAI_PROTOCOL)
-                        .with_translated_generation_protocols([
-                            gateway_protocol::openai::OPENAI_PROTOCOL,
-                            gateway_protocol::anthropic::ANTHROPIC_PROTOCOL,
-                        ])
-                        .with_upstream_feature_validation(),
+                    ModelCapabilities::new(
+                        [OperationKind::Generate, OperationKind::CountTokens].into(),
+                        None,
+                    )
+                    .with_generation_protocol(gateway_protocol::genai::GENAI_PROTOCOL)
+                    .with_translated_generation_protocols([
+                        gateway_protocol::openai::OPENAI_PROTOCOL,
+                        gateway_protocol::anthropic::ANTHROPIC_PROTOCOL,
+                    ])
+                    .with_upstream_feature_validation(),
                 )
                 .with_catalog_accounts(accounts)
             })
